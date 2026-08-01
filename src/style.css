@@ -493,6 +493,8 @@ mark {
   font-size: 0.9rem;
   margin-left: 18px;
   padding: 2px 8px;
+  min-width: 4.2em;
+  text-align: center;
   color: var(--ink-soft);
   background: transparent;
   border: 1px solid var(--line);
