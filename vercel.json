@@ -1,0 +1,8 @@
+{
+  "rewrites": [
+    {
+      "source": "/api/share/v1/:type/:payload*",
+      "destination": "/api/og?type=:type&payload=:payload*"
+    }
+  ]
+}
