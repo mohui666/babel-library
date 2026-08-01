@@ -3,6 +3,7 @@ import { computed, nextTick, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import {
   validateQuery,
+  textPagePath,
   search,
   randomPage,
   splitIntoChunks,
@@ -13,6 +14,7 @@ import {
 import { POOLS } from '../core/pools';
 import { CLASSICS } from '../classics/books';
 import { PAGE_LEN } from '../core/codec';
+import { coordsOfAddress, formatAddress } from '../core/address';
 import { bytesToB64u, b64uToBytes } from '../core/base64';
 import { HERO_QUOTES, RESULT_APHORISMS, pickRandom } from '../core/aphorisms';
 import { dailyPath } from '../core/daily';
@@ -487,6 +489,39 @@ function findVindication() {
 
 const dailyLink = dailyPath();
 
+/** 反向定位（馆员索引）：已有一页文字 → 直接算坐标 */
+const revRaw = ref('');
+const revErr = ref('');
+const revBad = ref<string[]>([]);
+const revLink = ref('');
+const revAddr = ref('');
+
+function revLocate() {
+  revErr.value = '';
+  revBad.value = [];
+  revLink.value = '';
+  const prepared = revRaw.value.normalize('NFC').replace(/\r\n?/g, '\n');
+  const v = validateQuery(prepared.replace(/\n/g, ''));
+  if (!v.ok) {
+    revErr.value = v.message;
+    revBad.value = v.badChars;
+    return;
+  }
+  if (codePointLen(v.query) > PAGE_LEN) {
+    revErr.value = `反向定位只处理一整页以内的文字（${PAGE_LEN} 字），你的文字更长——请用上方输入框分段定位。`;
+    return;
+  }
+  const { path, address } = textPagePath(v.query);
+  revLink.value = path;
+  revAddr.value = formatAddress(coordsOfAddress(address));
+}
+
+function revStrip() {
+  const set = new Set(revBad.value);
+  revRaw.value = [...revRaw.value].filter((ch) => !set.has(ch)).join('');
+  revLocate();
+}
+
 /** 馆员已经标记的几页（首页只示三） */
 const markedPages = CLASSICS.filter((b) =>
   ['daodejing', 'sunzi', 'tang-shi'].includes(b.id),
@@ -694,6 +729,30 @@ const showExamples = computed(
       <p class="index-name">今日之页</p>
       <p class="hint">今日全馆共同开放此页，零点更替。</p>
       <RouterLink class="btn small" :to="dailyLink">翻开今日之页</RouterLink>
+    </div>
+
+    <div class="index-item">
+      <p class="index-name">反向定位</p>
+      <p class="hint">
+        手中已有一页文字？直接算出它的坐标，不必检索。不足一页以空格补足，换行不计入。
+      </p>
+      <textarea
+        v-model="revRaw"
+        rows="2"
+        class="rev-input"
+        :placeholder="`粘贴一整页文字（不超过 ${PAGE_LEN} 字）……`"
+        aria-label="粘贴一整页文字"
+      ></textarea>
+      <div class="search-actions">
+        <button class="btn small" @click="revLocate">算出坐标</button>
+      </div>
+      <p v-if="revErr" class="error">
+        {{ revErr }}
+        <button v-if="revBad.length" class="btn small" @click="revStrip">剔除这些符号并重试</button>
+      </p>
+      <p v-if="revLink" class="rev-result">
+        它的坐标：<RouterLink :to="revLink">{{ revAddr }}</RouterLink>
+      </p>
     </div>
 
     <div class="index-item">

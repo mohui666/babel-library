@@ -325,8 +325,8 @@ try {
   const cellHash = await evalJs(`location.hash`);
   check('页格为短链接', cellHash.length < 200, `长度 ${cellHash.length}`);
 
-  // 11. 反向定位 → /v1/t/ 文字链接
-  await Page.navigate({ url: `${BASE}#/about` });
+  // 11. 反向定位（馆员索引）→ /v1/t/ 文字链接
+  await goHome();
   await waitFor(`document.querySelector('.rev-input')`);
   await evalJs(`(() => {
     const ta = document.querySelector('.rev-input');
