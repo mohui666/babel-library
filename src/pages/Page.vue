@@ -241,6 +241,18 @@ const showTicket = ref(false);
 const ticketUrl = ref('');
 const ticketTheme = ref<TicketTheme>('certificate');
 const ticketCloseBtn = ref<HTMLButtonElement>();
+const ticketOpenBtn = ref<HTMLButtonElement>();
+
+function closeTicket() {
+  showTicket.value = false;
+  nextTick(() => ticketOpenBtn.value?.focus());
+}
+
+function openTicket() {
+  makeTicket();
+  showTicket.value = true;
+  nextTick(() => ticketCloseBtn.value?.focus());
+}
 
 function buildTicketData(): TicketData | null {
   if (!state.value.ok) return null;
@@ -252,7 +264,7 @@ function buildTicketData(): TicketData | null {
     query: query.value,
     lines: ls.slice(from, to),
     addressText: formatAddress(state.value.coords),
-    url: window.location.href,
+    url: withShareSrc(window.location.href),
     host: window.location.host,
     theme: ticketTheme.value,
   };
@@ -263,12 +275,6 @@ function makeTicket() {
   if (!d) return;
   const canvas = renderTicket(d);
   ticketUrl.value = canvas.toDataURL('image/png');
-}
-
-function openTicket() {
-  makeTicket();
-  showTicket.value = true;
-  nextTick(() => ticketCloseBtn.value?.focus());
 }
 
 watch(ticketTheme, () => {
@@ -297,6 +303,9 @@ function toggleSave() {
 const SPHERE = '图书馆是一个球体，它精确的中心是任何一个六边形，它的圆周是远不可及的。';
 const isTrueCatalogue = computed(() => query.value === SPHERE);
 
+/** 接收者来源：分享链接带 src=share 时 CTA 更突出 */
+const fromShare = computed(() => route.query.src === 'share');
+
 // ---------------------------------------------------------------------------
 // 复制：本页链接 / 分享文案
 // ---------------------------------------------------------------------------
@@ -323,6 +332,11 @@ async function copyLink() {
   setTimeout(() => (copiedLink.value = false), 2000);
 }
 
+/** 分享链接带来源标记：接收者打开时展示更明显的「我也找一句」 */
+function withShareSrc(href: string): string {
+  return href.includes('?') ? `${href}&src=share` : `${href}?src=share`;
+}
+
 function shareText(): string {
   if (!state.value.ok) return '';
   const addr = formatAddress(state.value.coords);
@@ -334,8 +348,8 @@ function shareText(): string {
 /** 主分享动作：优先系统分享面板（可带收录证图），不支持则复制文案+链接 */
 async function sharePage() {
   if (!state.value.ok) return;
-  const text = shareText();
-  const url = window.location.href;
+  const url = withShareSrc(window.location.href);
+  const body = `${shareText()}\n${url}`;
   const nav = navigator as Navigator & {
     share?: (d: ShareData) => Promise<void>;
     canShare?: (d: ShareData) => boolean;
@@ -350,24 +364,24 @@ async function sharePage() {
         if (blob) {
           const file = new File([blob], '宇宙收录证.png', { type: 'image/png' });
           if (nav.canShare({ files: [file] })) {
-            await nav.share({ files: [file], title: '巴别图书馆', text });
+            await nav.share({ files: [file], title: '巴别图书馆', text: body });
             return;
           }
         }
       }
-      await nav.share({ title: '巴别图书馆', text, url });
+      await nav.share({ title: '巴别图书馆', text: body });
       return;
     } catch (e) {
       if ((e as DOMException)?.name === 'AbortError') return; // 用户取消
     }
   }
-  await copyText(`${text}${url}`);
+  await copyText(body);
   copiedShare.value = true;
   setTimeout(() => (copiedShare.value = false), 2000);
 }
 
 async function copyShare() {
-  await copyText(`${shareText()}${window.location.href}`);
+  await copyText(`${shareText()}\n${withShareSrc(window.location.href)}`);
   copiedShare.value = true;
   setTimeout(() => (copiedShare.value = false), 2000);
 }
@@ -377,9 +391,16 @@ async function copyShare() {
 // ---------------------------------------------------------------------------
 
 function onKey(e: KeyboardEvent) {
-  if (e.key === 'Escape' && showTicket.value) {
-    showTicket.value = false;
-    return;
+  if (showTicket.value) {
+    if (e.key === 'Escape') {
+      closeTicket();
+      return;
+    }
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') return; // 弹窗内禁止翻页
+    if (e.key === 'Tab') {
+      trapTicketFocus(e);
+      return;
+    }
   }
   const info = classicInfo.value;
   if (e.key === 'ArrowLeft') {
@@ -393,6 +414,26 @@ function onKey(e: KeyboardEvent) {
 
 onMounted(() => window.addEventListener('keydown', onKey));
 onUnmounted(() => window.removeEventListener('keydown', onKey));
+
+/** 焦点陷阱：Tab 在收录证弹窗内循环 */
+function trapTicketFocus(e: KeyboardEvent) {
+  const box = document.querySelector('.ticket-box');
+  if (!box) return;
+  const focusables = [...box.querySelectorAll<HTMLElement>('button, a[href]')].filter(
+    (el) => !el.hasAttribute('disabled'),
+  );
+  if (focusables.length === 0) return;
+  const first = focusables[0];
+  const last = focusables[focusables.length - 1];
+  const active = document.activeElement as HTMLElement | null;
+  if (e.shiftKey && (active === first || !box.contains(active))) {
+    e.preventDefault();
+    last.focus();
+  } else if (!e.shiftKey && (active === last || !box.contains(active))) {
+    e.preventDefault();
+    first.focus();
+  }
+}
 
 watchEffect(() => {
   document.title = state.value.ok
@@ -451,7 +492,7 @@ const PAGE = PAGE_LEN;
         <button class="btn primary" @click="sharePage">
           {{ copiedShare ? '已复制文案 ✓' : '分享这句话' }}
         </button>
-        <button class="btn" @click="openTicket">收录证</button>
+        <button ref="ticketOpenBtn" class="btn" @click="openTicket">收录证</button>
         <button class="btn" @click="toggleSave">
           {{ saved ? '移出藏书夹' : '收入藏书夹' }}
         </button>
@@ -489,6 +530,11 @@ const PAGE = PAGE_LEN;
 
     <div class="print-seal">巴別圖書館<br />藏書票</div>
 
+    <div class="cta-find" :class="{ big: fromShare }">
+      <p>{{ fromShare ? '这句话属于朋友。你的那一句在哪里？' : '你的下一句话，会在哪里？' }}</p>
+      <RouterLink class="btn primary" to="/">也给我的话找一个地址</RouterLink>
+    </div>
+
     <p class="aphorism center no-print">
       {{ isTrueCatalogue ? '一切目录皆从此页派生。' : aphorism }}
     </p>
@@ -503,7 +549,7 @@ const PAGE = PAGE_LEN;
       role="dialog"
       aria-modal="true"
       aria-label="收录证"
-      @click.self="showTicket = false"
+      @click.self="closeTicket"
     >
       <div class="ticket-box">
         <div class="ticket-themes">
@@ -515,6 +561,7 @@ const PAGE = PAGE_LEN;
             ]"
             :key="t[0]"
             :class="{ active: ticketTheme === t[0] }"
+            :aria-pressed="ticketTheme === t[0]"
             @click="ticketTheme = t[0] as TicketTheme"
           >
             {{ t[1] }}
@@ -523,7 +570,7 @@ const PAGE = PAGE_LEN;
         <img :src="ticketUrl" alt="收录证图卡" class="ticket-img" />
         <div class="ticket-actions">
           <a class="btn primary ticket-download" :href="ticketUrl" download="巴别图书馆收录证.png">下载</a>
-          <button ref="ticketCloseBtn" class="btn" @click="showTicket = false">收起</button>
+          <button ref="ticketCloseBtn" class="btn" @click="closeTicket">收起</button>
         </div>
       </div>
     </div>

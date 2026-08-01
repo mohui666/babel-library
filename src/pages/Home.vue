@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { computed, nextTick, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import {
   validateQuery,
@@ -120,15 +120,20 @@ function clearOutputs() {
   chunkProgress.value = '';
 }
 
-function doSearch() {
+function runSearch() {
   const id = ++runId;
+  resultCowrite.value = null;
   if (selectedPools.value.length === 0 && !customFillActive.value) {
     error.value = '请至少选择一种书写体系，或输入一段限定字符集。';
     badChars.value = [];
     clearOutputs();
     return;
   }
-  const prepared = query.value.normalize('NFC').replace(/\r\n?/g, '\n').trim();
+  const cw = cowriteA.value ? { a: cowriteA.value, b: query.value } : null;
+  const prepared = (cowriteA.value + query.value)
+    .normalize('NFC')
+    .replace(/\r\n?/g, '\n')
+    .trim();
   // 换行不收录于字符集，仅作分段边界，校验时排除
   const v = validateQuery(prepared.replace(/\n/g, ''));
   if (!v.ok) {
@@ -147,6 +152,7 @@ function doSearch() {
   }
   if (chunks.length === 1) {
     lastQuery.value = chunks[0];
+    resultCowrite.value = cw;
     const f = fillArgs();
     const [r] = search(chunks[0], 1, f.poolIds, f.customText);
     reveal(r, id);
@@ -177,6 +183,7 @@ async function reveal(r: SearchResult, id: number) {
   if (reducedMotion) {
     currentResult.value = r;
     resultAphorism.value = pickRandom(RESULT_APHORISMS);
+    nextTickScroll('auto'); // 关动画但仍把结果带入视野
     return;
   }
   revealing.value = true;
@@ -202,8 +209,8 @@ async function reveal(r: SearchResult, id: number) {
   nextTickScroll();
 }
 
-function nextTickScroll() {
-  setTimeout(() => resultEl.value?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 50);
+function nextTickScroll(behavior: ScrollBehavior = 'smooth') {
+  setTimeout(() => resultEl.value?.scrollIntoView({ behavior, block: 'center' }), 50);
 }
 
 /** 分段定位：每段各算出一页真实坐标，逐段报告进度 */
@@ -320,12 +327,18 @@ const textareaEl = ref<HTMLTextAreaElement>();
 function pickTheme(i: number) {
   themeIdx.value = i;
   query.value = THEMES[i].example;
-  runSearch();
+  // 只填入示例并全选，由用户改完后自己定位——避免满屏雷同的"系统分享"
+  nextTick(() => {
+    textareaEl.value?.focus();
+    textareaEl.value?.select();
+  });
 }
 
-/** 合著接写：链接携带前半句，朋友打开后续写（响应式：站内跳转同样生效） */
-const draftBanner = ref(false);
+/** 合著接写：第一位馆员的文字只读展示，第二位在独立输入框续写 */
+const cowriteA = ref('');
+const resultCowrite = ref<{ a: string; b: string } | null>(null);
 const copiedDraft = ref(false);
+const inviteFallbackUrl = ref('');
 
 watch(
   () => route.query.draft,
@@ -334,8 +347,9 @@ watch(
     try {
       const text = new TextDecoder().decode(b64uToBytes(d));
       if (text) {
-        query.value = text;
-        draftBanner.value = true;
+        cowriteA.value = text;
+        query.value = '';
+        nextTick(() => textareaEl.value?.focus());
       }
     } catch {}
   },
@@ -348,21 +362,30 @@ async function inviteCowrite() {
     error.value = '先写下半句，再邀朋友接写。';
     return;
   }
+  if (codePointLen(text) > 200) {
+    error.value = '前半句请控制在 200 字以内，邀请链接才不至于过长。';
+    return;
+  }
   error.value = '';
   const b64 = bytesToB64u(new TextEncoder().encode(text));
   const url = `${window.location.origin}${window.location.pathname}#/?draft=${b64}`;
+  const body = `这句话我只写了一半，等你来续：${text}\n点开接着写 → ${url}`;
+  const nav = navigator as Navigator & { share?: (d: ShareData) => Promise<void> };
+  if (nav.share) {
+    try {
+      await nav.share({ title: '巴别图书馆 · 合著一页', text: body });
+      return;
+    } catch (e) {
+      if ((e as DOMException)?.name === 'AbortError') return;
+    }
+  }
   try {
-    await navigator.clipboard.writeText(
-      `这句话我只写了一半，等你来续：${text}\n点开接着写 → ${url}`,
-    );
-  } catch {}
-  copiedDraft.value = true;
-  setTimeout(() => (copiedDraft.value = false), 2500);
-}
-
-function runSearch() {
-  draftBanner.value = false;
-  doSearch();
+    await navigator.clipboard.writeText(body);
+    copiedDraft.value = true;
+    setTimeout(() => (copiedDraft.value = false), 2500);
+  } catch {
+    inviteFallbackUrl.value = url; // 剪贴板不可用时亮出链接供手动复制
+  }
 }
 
 const heroQuote = pickRandom(HERO_QUOTES);
@@ -417,9 +440,11 @@ const showExamples = computed(
   </section>
 
   <section class="search-box">
-    <p v-if="draftBanner" class="draft-banner">
-      友人已写下前半句，请你接写下去——图书馆会把你们合著的整句找给你们。
-    </p>
+    <div v-if="cowriteA" class="cowrite">
+      <p class="cowrite-label">第一位馆员写道：</p>
+      <blockquote class="cowrite-a">{{ cowriteA }}</blockquote>
+      <p class="cowrite-label">请你（第二位馆员）接写下去：</p>
+    </div>
     <label class="sr-only" for="query-input">写下你要定位的文字</label>
     <textarea
       id="query-input"
@@ -434,11 +459,20 @@ const showExamples = computed(
     <div class="search-actions">
       <button class="btn primary" @click="runSearch">定位这句话</button>
       <button class="btn weak" @click="roam">随意翻开一页</button>
-      <button class="btn weak" @click="inviteCowrite">
+      <button v-if="query.trim() && !cowriteA" class="btn weak" @click="inviteCowrite">
         {{ copiedDraft ? '邀请链接已复制 ✓' : '邀朋友接写' }}
       </button>
       <span class="hint submit-hint">Ctrl + Enter 定位</span>
     </div>
+    <p v-if="inviteFallbackUrl" class="invite-fallback">
+      剪贴板不可用，请手动复制邀请链接：
+      <input
+        readonly
+        :value="inviteFallbackUrl"
+        class="invite-url"
+        @focus="($event.target as HTMLInputElement).select()"
+      />
+    </p>
     <p v-if="error" class="error">
       {{ error }}
       <button v-if="badChars.length" class="btn small" @click="stripBadChars">
@@ -465,6 +499,10 @@ const showExamples = computed(
 
   <article v-if="currentResult" ref="resultEl" class="card result single-result" aria-live="polite">
     <p class="aphorism">{{ resultAphorism }}</p>
+    <p v-if="resultCowrite" class="cowrite-mark">
+      <span class="cowrite-who">第一位馆员：</span>{{ resultCowrite.a }}<br />
+      <span class="cowrite-who">第二位馆员：</span>{{ resultCowrite.b }}
+    </p>
     <p class="snippet">
       <template v-for="(seg, i) in [segments(currentResult)]" :key="i"
         >{{ seg[0] }}<mark>{{ seg[1] }}</mark

@@ -1153,3 +1153,75 @@ body {
     min-height: 44px;
   }
 }
+
+/* ---------- 接收者 CTA / 合著 / 邀请回退 ---------- */
+
+.cta-find {
+  text-align: center;
+  margin: 28px 0 8px;
+  padding: 18px;
+  border: 1px dashed var(--line);
+  border-radius: 4px;
+}
+
+.cta-find p {
+  margin: 0 0 12px;
+  color: var(--ink-soft);
+}
+
+.cta-find.big {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.cta-find.big p {
+  color: var(--ink);
+  font-size: 1.05rem;
+}
+
+.cowrite {
+  margin-bottom: 12px;
+}
+
+.cowrite-label {
+  font-size: 0.8rem;
+  color: var(--ink-soft);
+  margin: 8px 0 4px;
+}
+
+.cowrite-a {
+  margin: 0;
+  padding: 10px 14px;
+  border-left: 3px solid var(--accent);
+  background: var(--paper-card);
+  border-radius: 0 3px 3px 0;
+}
+
+.cowrite-mark {
+  font-size: 0.88rem;
+  color: var(--ink-soft);
+  border-bottom: 1px dashed var(--line);
+  padding-bottom: 10px;
+  margin-bottom: 12px;
+}
+
+.cowrite-who {
+  color: var(--accent);
+}
+
+.invite-fallback {
+  font-size: 0.82rem;
+  color: var(--ink-soft);
+}
+
+.invite-url {
+  width: 100%;
+  font: inherit;
+  font-size: 0.8rem;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: var(--paper-card);
+  color: var(--ink);
+  margin-top: 4px;
+}

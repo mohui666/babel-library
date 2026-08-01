@@ -184,6 +184,7 @@ try {
   const collapsedLines = await evalJs(`document.querySelectorAll('.sheet-line').length`);
   check('默认只显示上下文（≤5 行）', collapsedLines > 0 && collapsedLines <= 5, `${collapsedLines} 行`);
   check('高亮在上下文中', await evalJs(`document.querySelectorAll('.sheet mark').length > 0`));
+  check('接收者 CTA 存在', await evalJs(`(document.querySelector('.cta-find')?.textContent ?? '').includes('也给我的话找一个地址')`));
   await clickButton('展开完整书页');
   await sleep(300);
   const fullLines = await evalJs(`document.querySelectorAll('.sheet-line').length`);
@@ -260,12 +261,17 @@ try {
   })()`);
   check('只勾汉字时上下文几乎全为汉字', cjkRatio > 0.9, `占比 ${(cjkRatio * 100).toFixed(1)}%`);
 
-  // 7. 例句可直接定位
+  // 7. 主题筹码：填充示例但不自动定位，用户改完后自行定位
   await goHome();
   await waitFor(`document.querySelector('.example-chip')`);
   await evalJs(`document.querySelector('.example-chip').click(), true`);
+  await sleep(300);
+  const chipVal = await evalJs(`document.querySelector('textarea').value`);
+  const chipAuto = await evalJs(`!!document.querySelector('.single-result') || !!document.querySelector('.reveal')`);
+  check('主题筹码填充示例且不自动定位', chipVal.length > 0 && !chipAuto, chipVal.slice(0, 16));
+  await clickButton('定位这句话');
   await waitFor(`document.querySelector('.single-result')`, 15000);
-  check('例句点击可直接定位', true);
+  check('填充后可手动定位', true);
 
   // 7b. 「另一处」为快速揭示（首个步骤是合并的「正在确定坐标」）
   await clickButton('在图书馆的另一处寻找同一句话');
@@ -437,12 +443,15 @@ try {
   check('主题入口填充示例', themeVal.length > 0, themeVal.slice(0, 20));
   const draftB64 = bytesToB64u(new TextEncoder().encode('如果我们没有在这里相遇'));
   await Page.navigate({ url: `${BASE}#/?draft=${draftB64}` });
-  await waitFor(`document.querySelector('.draft-banner')`);
-  const draftVal = await evalJs(`document.querySelector('textarea').value`);
-  check('接写链接预填前半句', draftVal.includes('如果我们没有在这里相遇'), draftVal.slice(0, 30));
+  await waitFor(`document.querySelector('.cowrite-a')`);
+  const cowriteText = await evalJs(`document.querySelector('.cowrite-a')?.textContent ?? ''`);
+  const bEmpty = await evalJs(`document.querySelector('textarea').value === ''`);
+  check('前半句只读展示、续写框独立', cowriteText.includes('如果我们没有在这里相遇') && bEmpty, cowriteText.slice(0, 20));
+  await setTextarea('，也会在另一座图书馆找到彼此。');
   await clickButton('定位这句话');
   await waitFor(`document.querySelector('.single-result')`, 15000);
-  check('接写后可定位合著句', true);
+  const cowriteMark = await evalJs(`document.querySelector('.cowrite-mark')?.textContent ?? ''`);
+  check('结果标记两位馆员', cowriteMark.includes('第一位馆员') && cowriteMark.includes('第二位馆员'), cowriteMark.slice(0, 40));
 
   const errors = consoleMsgs.filter((m) => m.startsWith('[error]') || m.startsWith('[exception]') || m.startsWith('[warn]'));
   check('无 Vue 警告/异常', errors.length === 0, errors.slice(0, 5).join('\n'));
@@ -450,9 +459,19 @@ try {
   failures.push('执行异常');
   console.error('E2E 执行异常:', e.message);
 } finally {
-  if (client) await client.close();
-  browser.kill();
-  await sleep(800);
+  // 先经 CDP 正常关闭浏览器并等待进程退出，再清理档案目录（避免 EBUSY）
+  if (client) {
+    try {
+      await client.Browser.close();
+    } catch {}
+    try {
+      await client.close();
+    } catch {}
+  }
+  try {
+    await Promise.race([new Promise((r) => browser.once('exit', r)), sleep(6000)]);
+  } catch {}
+  if (browser.exitCode === null && !browser.killed) browser.kill();
   rmSync(PROFILE, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
 }
 

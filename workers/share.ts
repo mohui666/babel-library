@@ -4,14 +4,21 @@
 // 本 Worker 提供 /share/v1/s/<配方> 与 /share/v1/t/<文字> 两个入口：
 //   - 爬虫：得到带个性化 og:title / og:description 的 HTML（图片暂用静态 og.png）
 //   - 人类：立即 302 到真实的 hash 页面
-// 不存储任何数据——配方里的检索词直接从 URL 解码，与全站「无数据库」承诺一致。
+//
+// 隐私取舍（重要，与全站承诺一致）：
+//   - 默认分享永远是「私密分享」：hash 链接 + 本地生成的图片，文字不经过任何服务器。
+//   - 本 Worker 是「丰富预览」的可选增强：链接文字会经过预览服务（不主动存储），
+//     只应在用户明确选择后启用。不要在默认流程中替换 hash 链接。
 //
 // 部署：
 //   npm i -g wrangler && wrangler login
+//   在 wrangler.toml 中配置：[vars] SITE = "https://<站点域名>"
 //   wrangler deploy workers/share.ts --name babel-share --compatibility-date 2026-01-01
-//   然后把分享按钮/复制文案里的链接域名换成 https://<worker 域名>/share/v1/...
+//   调试预览卡：访问 /share/v1/s/<配方>?preview=1 可强制看到卡片 HTML。
 
-const SITE = 'https://your-domain.example'; // 部署后改为站点域名
+interface Env {
+  SITE?: string;
+}
 
 function b64uToBytes(s: string): Uint8Array {
   const REV = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
@@ -39,7 +46,7 @@ function queryFromRecipe(payload: string): string {
   return new TextDecoder().decode(buf.slice(13 + ctLen));
 }
 
-function htmlFor(query: string, target: string): string {
+function htmlFor(query: string, target: string, site: string): string {
   const q = query || '一页无名的文字';
   const title = `「${q.slice(0, 40)}」——早已写在巴别图书馆的某一页`;
   const desc = '它不是刚刚生成的，从一开始它就在那里。凭坐标，任何人都能重新找到它。';
@@ -48,7 +55,7 @@ function htmlFor(query: string, target: string): string {
 <meta charset="utf-8" />
 <meta property="og:title" content="${escapeHtml(title)}" />
 <meta property="og:description" content="${escapeHtml(desc)}" />
-<meta property="og:image" content="${SITE}/og.png" />
+<meta property="og:image" content="${site}/og.png" />
 <meta property="og:type" content="article" />
 <meta http-equiv="refresh" content="0;url=${escapeHtml(target)}" />
 <title>${escapeHtml(title)}</title>
@@ -62,7 +69,8 @@ function escapeHtml(s: string): string {
 }
 
 export default {
-  async fetch(request: Request): Promise<Response> {
+  async fetch(request: Request, env: Env): Promise<Response> {
+    const SITE = env.SITE ?? 'https://your-domain.example';
     const url = new URL(request.url);
     const m = url.pathname.match(/^\/share\/v1\/(s|t)\/(.+)$/);
     if (!m) return new Response('not found', { status: 404 });
@@ -70,10 +78,11 @@ export default {
       const query =
         m[1] === 's' ? queryFromRecipe(m[2]) : new TextDecoder().decode(b64uToBytes(m[2]));
       const target = `${SITE}/#/v1/${m[1]}/${m[2]}`;
+      const forceCard = url.searchParams.get('preview') === '1';
       const ua = request.headers.get('user-agent') ?? '';
       const isCrawler = /bot|crawler|spider|facebookexternal|twitterbot|wechat|whatsapp|telegram|slack|discord/i.test(ua);
-      if (!isCrawler) return Response.redirect(target, 302);
-      return new Response(htmlFor(query, target), {
+      if (!isCrawler && !forceCard) return Response.redirect(target, 302);
+      return new Response(htmlFor(query, target, SITE), {
         headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'public, max-age=3600' },
       });
     } catch {
