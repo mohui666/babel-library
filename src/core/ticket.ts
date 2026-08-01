@@ -20,10 +20,15 @@ export interface TicketData {
   /** 书页片段（行 × 段），用作乱码纹理 */
   lines: TicketSeg[][];
   addressText: string;
-  /** 完整短链接（二维码指向） */
+  /** 完整短链接（二维码指向；接龙作品时被 continueUrl 取代） */
   url: string;
   host: string;
   theme: TicketTheme;
+  /** 接龙作品：人数与续棒链接 */
+  chain?: {
+    count: number;
+    continueUrl: string;
+  };
 }
 
 const SERIF = 'Georgia,"Songti SC","STSong","Noto Serif SC","SimSun",serif';
@@ -243,7 +248,15 @@ function renderCertificate(d: TicketData, dark = false): HTMLCanvasElement {
   ctx.textAlign = 'center';
   ctx.fillStyle = p.soft;
   ctx.font = `30px ${SERIF}`;
-  ctx.fillText(dark ? '巴別圖書館 · 未來墓誌銘' : '巴別圖書館 · 宇宙收錄證', W / 2, 140);
+  ctx.fillText(
+    d.chain
+      ? `宇宙接龙檔案 · 由 ${d.chain.count} 位館員共同找到`
+      : dark
+        ? '巴別圖書館 · 未來墓誌銘'
+        : '巴別圖書館 · 宇宙收錄證',
+    W / 2,
+    140,
+  );
 
   const big = d.query || [...(d.lines[0]?.map((s) => s.t).join('') ?? '')].slice(0, 30).join('');
   const endY = drawBigText(ctx, big, W / 2, 330, W - 220, 8, p);
@@ -269,8 +282,8 @@ function renderCertificate(d: TicketData, dark = false): HTMLCanvasElement {
   ctx.textAlign = 'left';
   ctx.fillStyle = p.soft;
   ctx.font = `22px ${SERIF}`;
-  ctx.fillText('扫码打开这一页', 110, 1106);
-  drawQr(ctx, d.url, 110, 1130, 150, p);
+  ctx.fillText(d.chain ? '扫码续写下一棒' : '扫码打开这一页', 110, 1106);
+  drawQr(ctx, d.chain?.continueUrl ?? d.url, 110, 1130, 150, p);
 
   ctx.textAlign = 'right';
   ctx.fillStyle = p.accent;

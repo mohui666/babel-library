@@ -447,7 +447,17 @@ try {
   await Page.navigate({ url: chainUrl(['如果我们没有在这里相遇', '也会在另一座图书馆找到彼此']) });
   await waitFor(`document.querySelectorAll('.chain-seg').length === 2`);
   check('接龙链接展示已有段落', true);
+
+  // 取消系统分享：这一棒不被吞
   await setTextarea('——那里也有无限个我们。');
+  await evalJs(`navigator.share = () => Promise.reject(new DOMException('用户取消', 'AbortError')), true`);
+  await clickButton('接着传下去');
+  await sleep(400);
+  const keptText = await evalJs(`document.querySelector('textarea').value`);
+  check('取消分享不吞棒', keptText.includes('无限个我们'), keptText.slice(0, 20));
+  check('取消后亮出接龙链接', await evalJs(`!!document.querySelector('.invite-url')`));
+
+  await evalJs(`delete navigator.share, true`);
   await clickButton('接着传下去');
   await sleep(500);
   check('传下去后链接已复制', await evalJs(`[...document.querySelectorAll('button')].some(b => b.textContent.includes('链接已复制'))`));
@@ -458,6 +468,17 @@ try {
   await waitFor(`document.querySelector('.single-result')`, 15000);
   const chainMark = await evalJs(`document.querySelector('.cowrite-mark')?.textContent ?? ''`);
   check('完成接龙标记各段归属', chainMark.includes('第 1 位馆员') && chainMark.includes('第 3 位馆员'), chainMark.slice(0, 50));
+
+  // 接龙身份穿透到正式书页与分享文案
+  await evalJs(`document.querySelector('.single-result a.btn.primary').click(), true`);
+  await waitFor(`document.querySelector('.sheet')`);
+  const archive = await evalJs(`document.querySelector('.chain-archive')?.textContent ?? ''`);
+  check('正式书页保留接龙档案', archive.includes('宇宙接龙档案') && archive.includes('第 3 位馆员'), archive.slice(0, 50));
+  await evalJs(`navigator.clipboard.writeText = async (t) => { window.__copied = t; }, true`);
+  await clickButton('分享这句话');
+  await sleep(400);
+  const shared = await evalJs(`window.__copied ?? ''`);
+  check('接龙分享文案', shared.includes('合著了一页') && shared.includes('轮到你'), shared.slice(0, 60));
 
   await Page.navigate({ url: `${BASE}#/?draft=${bytesToB64u(new TextEncoder().encode('旧格式一句话'))}` });
   await waitFor(`document.querySelector('.chain-seg')`);

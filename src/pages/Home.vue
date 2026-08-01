@@ -16,6 +16,12 @@ import { CLASSICS } from '../classics/books';
 import { PAGE_LEN } from '../core/codec';
 import { coordsOfAddress, formatAddress } from '../core/address';
 import { bytesToB64u, b64uToBytes } from '../core/base64';
+import {
+  encodeChain,
+  decodeChain,
+  CHAIN_MAX_SEGS,
+  CHAIN_SEG_MAX_CHARS,
+} from '../core/chain';
 import { HERO_QUOTES, RESULT_APHORISMS, pickRandom } from '../core/aphorisms';
 import { dailyPath } from '../core/daily';
 import { loadShelf, removeFromShelf, type ShelfItem } from '../core/shelf';
@@ -298,8 +304,12 @@ function segments(r: SearchResult): [string, string, string] {
 }
 
 function resultLink(r: SearchResult | ChunkEntry): string {
-  if (r.shortPath) return r.shortPath;
-  return `/v1/page/${r.key}?q=${encodeURIComponent(r.query)}`;
+  const base = r.shortPath ?? `/v1/page/${r.key}?q=${encodeURIComponent(r.query)}`;
+  // 接龙作品：把各棒归属带进正式书页（宇宙接龙档案）
+  if (resultChain.value && resultChain.value.length > 0) {
+    return `${base}${base.includes('?') ? '&' : '?'}chain=${encodeChain(resultChain.value)}`;
+  }
+  return base;
 }
 
 // ---------------------------------------------------------------------------
@@ -324,7 +334,13 @@ const THEMES = [
     example: '十年后的我，你过得比今天好吗？',
   },
 ];
-const themeIdx = ref(Math.floor(Date.now() / 86400000) % THEMES.length);
+/** 每日轮换的主题（本地日期，与今日之页同一零点） */
+const themeIdx = ref(
+  (() => {
+    const n = new Date();
+    return (n.getFullYear() * 10000 + (n.getMonth() + 1) * 100 + n.getDate()) % THEMES.length;
+  })(),
+);
 const theme = computed(() => THEMES[themeIdx.value]);
 const textareaEl = ref<HTMLTextAreaElement>();
 
@@ -343,24 +359,6 @@ const chain = ref<string[]>([]);
 const resultChain = ref<string[] | null>(null);
 const copiedChain = ref(false);
 const chainFallbackUrl = ref('');
-
-function encodeChain(segs: string[]): string {
-  return bytesToB64u(new TextEncoder().encode(JSON.stringify(segs)));
-}
-
-function decodeChain(b64: string): string[] | null {
-  try {
-    const arr = JSON.parse(new TextDecoder().decode(b64uToBytes(b64)));
-    if (
-      Array.isArray(arr) &&
-      arr.length > 0 &&
-      arr.every((s) => typeof s === 'string' && s.length > 0)
-    ) {
-      return arr;
-    }
-  } catch {}
-  return null;
-}
 
 watch(
   () => [route.query.chain, route.query.draft] as const,
@@ -408,25 +406,31 @@ async function copyTextShim(t: string): Promise<boolean> {
   }
 }
 
-/** 分享接龙链接（优先系统面板，失败回退剪贴板，再失败亮出链接） */
-async function shareChain(segs: string[], body: string) {
+type ShareOutcome = 'shared' | 'copied' | 'cancelled';
+
+/** 分享接龙链接；返回结果供调用方决定是否提交这一棒 */
+async function shareChain(segs: string[], body: string): Promise<ShareOutcome> {
   const url = `${window.location.origin}${window.location.pathname}#/?chain=${encodeChain(segs)}`;
   const full = `${body}\n${url}`;
   const nav = navigator as Navigator & { share?: (d: ShareData) => Promise<void> };
   if (nav.share) {
     try {
       await nav.share({ title: '巴别图书馆 · 接龙', text: full });
-      return;
+      return 'shared';
     } catch (e) {
-      if ((e as DOMException)?.name === 'AbortError') return;
+      if ((e as DOMException)?.name === 'AbortError') {
+        chainFallbackUrl.value = url; // 取消也亮出链接，这一棒不会被吞
+        return 'cancelled';
+      }
     }
   }
   if (await copyTextShim(full)) {
     copiedChain.value = true;
     setTimeout(() => (copiedChain.value = false), 2500);
-  } else {
-    chainFallbackUrl.value = url;
+    return 'copied';
   }
+  chainFallbackUrl.value = url;
+  return 'cancelled';
 }
 
 /** 发起接龙（第一棒） */
@@ -436,32 +440,45 @@ async function inviteCowrite() {
     error.value = '先写下一句话，再开龙。';
     return;
   }
-  if (codePointLen(text) > 200) {
-    error.value = '第一棒请控制在 200 字以内，邀请链接才不至于过长。';
+  if (codePointLen(text) > CHAIN_SEG_MAX_CHARS) {
+    error.value = `第一棒请控制在 ${CHAIN_SEG_MAX_CHARS} 字以内，邀请链接才不至于过长。`;
     return;
   }
   error.value = '';
   await shareChain([text], `这句话我只写了开头，等你来续：${text}\n点开接着写 →`);
 }
 
-/** 接着传下去：把自己这段入链，生成下一棒链接 */
+/** 接着传下去：分享成功后才把这一棒入链；取消不吞字 */
 async function passChain() {
   const t = query.value.normalize('NFC').trim();
   if (!t) {
     error.value = '写下你的那一段，再传给下一位。';
     return;
   }
-  if (codePointLen(t) > 200) {
-    error.value = '每一棒请控制在 200 字以内。';
+  if (chain.value.length >= CHAIN_MAX_SEGS) {
+    error.value = `已接满 ${CHAIN_MAX_SEGS} 棒，该完成接龙并定位了。`;
+    return;
+  }
+  if (codePointLen(t) > CHAIN_SEG_MAX_CHARS) {
+    error.value = `每一棒请控制在 ${CHAIN_SEG_MAX_CHARS} 字以内。`;
     return;
   }
   error.value = '';
   const segs = [...chain.value, t];
-  chain.value = segs;
-  query.value = '';
-  await shareChain(
+  const outcome = await shareChain(
     segs,
     `巴别图书馆 · 接龙第 ${segs.length} 棒——前面已有 ${segs.length - 1} 段，等你续下一段 →`,
+  );
+  if (outcome === 'cancelled') return; // 文字留在输入框，链接已亮出
+  chain.value = segs;
+  query.value = '';
+}
+
+/** 重新分享当前接龙（不新增段落） */
+async function reshareChain() {
+  await shareChain(
+    chain.value,
+    `巴别图书馆 · 接龙第 ${chain.value.length} 棒——等你续下一段 →`,
   );
 }
 
@@ -543,7 +560,7 @@ const showExamples = computed(
 </script>
 
 <template>
-  <section class="hero">
+  <section v-if="!chain.length" class="hero">
     <blockquote class="quote">
       <p>「{{ heroQuote.text }}」</p>
       <footer>—— {{ heroQuote.cite }}</footer>
@@ -553,6 +570,8 @@ const showExamples = computed(
       今日开放：《{{ theme.name }}》 <span class="hint">{{ theme.hint }}</span>
     </p>
   </section>
+
+  <p v-else class="chain-landing">朋友把第 {{ chain.length + 1 }} 棒交给你。</p>
 
   <section class="search-box">
     <div v-if="chain.length" class="cowrite">
@@ -581,10 +600,11 @@ const showExamples = computed(
       <button class="btn primary" @click="runSearch">
         {{ chain.length ? '完成接龙并定位' : '定位这句话' }}
       </button>
-      <button v-if="chain.length" class="btn" @click="passChain">
-        {{ copiedChain ? '链接已复制 ✓' : '接着传下去' }}
+      <button v-if="chain.length" class="btn" @click="passChain">接着传下去</button>
+      <button v-if="chain.length" class="btn weak" @click="reshareChain">
+        {{ copiedChain ? '链接已复制 ✓' : '分享当前接龙' }}
       </button>
-      <button class="btn weak" @click="roam">随意翻开一页</button>
+      <button v-if="!chain.length" class="btn weak" @click="roam">随意翻开一页</button>
       <button v-if="query.trim() && !chain.length" class="btn weak" @click="inviteCowrite">
         {{ copiedChain ? '邀请链接已复制 ✓' : '开龙，邀朋友接写' }}
       </button>
@@ -605,13 +625,14 @@ const showExamples = computed(
         剔除这些符号并定位
       </button>
     </p>
-    <div v-if="showExamples" class="examples">
+    <div v-if="showExamples && !chain.length" class="examples">
       <span class="hint">换个主题：</span>
       <button
         v-for="(t, i) in THEMES"
         :key="t.name"
         class="example-chip"
         :class="{ active: themeIdx === i }"
+        :aria-pressed="themeIdx === i"
         @click="pickTheme(i)"
       >
         {{ t.name }}

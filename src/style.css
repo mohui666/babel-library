@@ -1254,3 +1254,52 @@ body {
 .chain-drop:hover {
   color: var(--accent);
 }
+
+/* ---------- 接龙落地页 / 宇宙接龙档案 / 触控 ---------- */
+
+.chain-landing {
+  text-align: center;
+  font-size: 1.15rem;
+  letter-spacing: 0.1em;
+  color: var(--accent);
+  margin: 24px 0 8px;
+}
+
+.chain-archive {
+  margin: 22px 0 8px;
+  padding: 14px 18px;
+  border-left: 3px solid var(--accent);
+  background: var(--paper-card);
+  border-radius: 0 4px 4px 0;
+}
+
+.chain-archive-title {
+  margin: 0 0 10px;
+  font-size: 0.85rem;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+}
+
+.chain-archive-seg {
+  margin: 6px 0;
+  font-size: 0.92rem;
+}
+
+.chain-archive-seg .cowrite-who {
+  display: inline-block;
+  margin-right: 8px;
+  font-size: 0.75rem;
+}
+
+@media (max-width: 560px) {
+  .example-chip {
+    padding: 10px 16px;
+    min-height: 44px;
+  }
+
+  .chain-drop {
+    display: inline-block;
+    padding: 10px 6px;
+    min-height: 44px;
+  }
+}

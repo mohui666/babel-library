@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { PAGE_LEN, SPACE_SIZE, permute, permuteInv, textOfAddress } from '../core/codec';
 import { addrToKey, keyToAddr, decompose, formatAddress } from '../core/address';
 import { b64uToBytes } from '../core/base64';
+import { encodeChain, decodeChain } from '../core/chain';
 import {
   unpackRecipe,
   addressFromRecipeDelta,
@@ -267,6 +268,9 @@ function buildTicketData(): TicketData | null {
     url: withShareSrc(window.location.href),
     host: window.location.host,
     theme: ticketTheme.value,
+    chain: chainSegs.value.length
+      ? { count: chainSegs.value.length, continueUrl: chainContinueUrl.value }
+      : undefined,
   };
 }
 
@@ -306,6 +310,20 @@ const isTrueCatalogue = computed(() => query.value === SPHERE);
 /** 接收者来源：分享链接带 src=share 时 CTA 更突出 */
 const fromShare = computed(() => route.query.src === 'share');
 
+/** 宇宙接龙档案：链接携带各棒归属（来自首页接龙定位） */
+const chainSegs = computed<string[]>(() => {
+  const c = route.query.chain;
+  if (typeof c !== 'string' || !c) return [];
+  return decodeChain(c) ?? [];
+});
+
+/** 续棒链接：扫码回到首页接着写 */
+const chainContinueUrl = computed(() =>
+  chainSegs.value.length
+    ? `${window.location.origin}${window.location.pathname}#/?chain=${encodeChain(chainSegs.value)}`
+    : '',
+);
+
 // ---------------------------------------------------------------------------
 // 复制：本页链接 / 分享文案
 // ---------------------------------------------------------------------------
@@ -339,6 +357,9 @@ function withShareSrc(href: string): string {
 
 function shareText(): string {
   if (!state.value.ok) return '';
+  if (chainSegs.value.length > 0) {
+    return `我们 ${chainSegs.value.length} 个人在巴别图书馆合著了一页，现在轮到你。`;
+  }
   const addr = formatAddress(state.value.coords);
   return query.value
     ? `我在巴别图书馆找到了「${query.value}」——它不是刚刚生成的，从一开始，它就在${addr}等着我。你也去找一句：`
@@ -529,6 +550,15 @@ const PAGE = PAGE_LEN;
     </article>
 
     <div class="print-seal">巴別圖書館<br />藏書票</div>
+
+    <div v-if="chainSegs.length" class="chain-archive">
+      <p class="chain-archive-title">
+        宇宙接龙档案 · 本页由 {{ chainSegs.length }} 位馆员共同写就
+      </p>
+      <p v-for="(s, i) in chainSegs" :key="i" class="chain-archive-seg">
+        <span class="cowrite-who">第 {{ i + 1 }} 位馆员</span>{{ s }}
+      </p>
+    </div>
 
     <div class="cta-find" :class="{ big: fromShare }">
       <p>{{ fromShare ? '这句话属于朋友。你的那一句在哪里？' : '你的下一句话，会在哪里？' }}</p>
