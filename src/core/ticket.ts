@@ -1,10 +1,9 @@
-import QRCode from 'qrcode';
-
 // ---------------------------------------------------------------------------
 // 收录证 / 藏书票：canvas 绘制分享图卡（三种装帧）
 //   certificate 宇宙收录证：句子为绝对主角，附二维码与行动文案
 //   epitaph    未来墓志铭：深色戏剧化装帧
 //   ticket     原始藏书票：文学书页标本（高亮句藏于乱码）
+// 二维码库按需动态加载，不进首包。
 // ---------------------------------------------------------------------------
 
 export interface TicketSeg {
@@ -108,13 +107,14 @@ function drawSeal(
 
 function drawQr(
   ctx: CanvasRenderingContext2D,
+  QR: typeof import('qrcode'),
   url: string,
   x: number,
   y: number,
   size: number,
   p: Palette,
 ) {
-  const qr = QRCode.create(url, { errorCorrectionLevel: 'M' });
+  const qr = QR.create(url, { errorCorrectionLevel: 'M' });
   const n = qr.modules.size;
   const cell = size / n;
   ctx.fillStyle = p.qrLight;
@@ -237,7 +237,11 @@ function fitCenteredText(
 
 // ---------------------------------------------------------------------------
 
-function renderCertificate(d: TicketData, dark = false): HTMLCanvasElement {
+function renderCertificate(
+  d: TicketData,
+  dark: boolean,
+  QR: typeof import('qrcode'),
+): HTMLCanvasElement {
   const W = 1080;
   const H = 1350;
   const canvas = document.createElement('canvas');
@@ -292,7 +296,7 @@ function renderCertificate(d: TicketData, dark = false): HTMLCanvasElement {
   ctx.fillStyle = p.soft;
   ctx.font = `22px ${SERIF}`;
   ctx.fillText(d.chain ? '扫码续写下一棒' : '扫码打开这一页', 110, 1106);
-  drawQr(ctx, d.chain?.continueUrl ?? d.url, 110, 1130, 150, p);
+  drawQr(ctx, QR, d.chain?.continueUrl ?? d.url, 110, 1130, 150, p);
 
   ctx.textAlign = 'right';
   ctx.fillStyle = p.accent;
@@ -375,8 +379,16 @@ function renderClassicTicket(d: TicketData): HTMLCanvasElement {
   return canvas;
 }
 
-export function renderTicket(d: TicketData): HTMLCanvasElement {
-  if (d.theme === 'epitaph') return renderCertificate(d, true);
-  if (d.theme === 'certificate') return renderCertificate(d, false);
+/** 二维码库按需加载（首次使用才下载，之后复用） */
+let qrModule: Promise<typeof import('qrcode')> | null = null;
+
+export function loadQrCode() {
+  qrModule ??= import('qrcode');
+  return qrModule;
+}
+
+export async function renderTicket(d: TicketData): Promise<HTMLCanvasElement> {
+  if (d.theme === 'epitaph') return renderCertificate(d, true, await loadQrCode());
+  if (d.theme === 'certificate') return renderCertificate(d, false, await loadQrCode());
   return renderClassicTicket(d);
 }

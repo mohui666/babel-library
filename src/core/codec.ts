@@ -13,6 +13,8 @@ import { ALPHABET_SIZE, codePointAtIndex, indexOfCodePoint } from './alphabet';
 export const PAGE_LEN = 4000;
 /** 字符集大小，即页编号的进制 */
 export const BASE = BigInt(ALPHABET_SIZE);
+const BASE2 = BASE ** 2n;
+const BASE3 = BASE ** 3n;
 /** 全部可能页的总数 M = |Σ|^PAGE_LEN */
 export const SPACE_SIZE = BASE ** BigInt(PAGE_LEN);
 
@@ -122,10 +124,30 @@ export function indicesToNumber(indices: number[]): bigint {
   if (indices.length !== PAGE_LEN) {
     throw new Error(`一页必须是 ${PAGE_LEN} 个字符，得到 ${indices.length}`);
   }
+  // 每次乘法处理 3 位（约 3 倍提速；数值与逐位展开完全一致）
   let n = 0n;
-  for (const i of indices) {
-    if (i < 0 || i >= ALPHABET_SIZE) throw new Error(`非法字符序号 ${i}`);
-    n = n * BASE + BigInt(i);
+  let i = 0;
+  for (; i + 3 <= indices.length; i += 3) {
+    const a = indices[i];
+    const b = indices[i + 1];
+    const c = indices[i + 2];
+    if (
+      a < 0 ||
+      a >= ALPHABET_SIZE ||
+      b < 0 ||
+      b >= ALPHABET_SIZE ||
+      c < 0 ||
+      c >= ALPHABET_SIZE
+    ) {
+      throw new Error(`非法字符序号 ${a < 0 || a >= ALPHABET_SIZE ? a : b < 0 || b >= ALPHABET_SIZE ? b : c}`);
+    }
+    n = n * BASE3 + (BigInt(a) * BASE2 + BigInt(b) * BASE + BigInt(c));
+  }
+  for (; i < indices.length; i++) {
+    if (indices[i] < 0 || indices[i] >= ALPHABET_SIZE) {
+      throw new Error(`非法字符序号 ${indices[i]}`);
+    }
+    n = n * BASE + BigInt(indices[i]);
   }
   return n;
 }
@@ -134,9 +156,16 @@ export function numberToIndices(n: bigint): number[] {
   if (n < 0n || n >= SPACE_SIZE) throw new RangeError('页编号超出范围');
   const indices = new Array<number>(PAGE_LEN);
   let rest = n;
-  for (let i = PAGE_LEN - 1; i >= 0; i--) {
-    indices[i] = Number(rest % BASE);
-    rest /= BASE;
+  let i = PAGE_LEN;
+  // 每次除法处理 3 位；块值 < BASE^3 ≈ 3.7e15，在双精度安全整数范围内
+  while (i > 0) {
+    const chunk = Number(rest % BASE3);
+    rest /= BASE3;
+    const take = Math.min(3, i);
+    for (let k = take - 1; k >= 0; k--) {
+      indices[i - 1 - k] = Math.floor(chunk / ALPHABET_SIZE ** k) % ALPHABET_SIZE;
+    }
+    i -= take;
   }
   return indices;
 }

@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
-import QRCode from 'qrcode';
-import { renderTicket, type TicketData, type TicketTheme } from '../core/ticket';
+import { renderTicket, loadQrCode, type TicketData, type TicketTheme } from '../core/ticket';
 
 const props = defineProps<{ data: TicketData | null }>();
 const emit = defineEmits<{ close: [] }>();
@@ -14,9 +13,14 @@ const box = ref<HTMLDivElement>();
 const copiedBody = ref(false);
 const copiedPreview = ref(false);
 
-function render() {
+let renderToken = 0;
+
+async function render() {
   if (!props.data) return;
-  ticketUrl.value = renderTicket({ ...props.data, theme: theme.value }).toDataURL('image/png');
+  const token = ++renderToken;
+  const canvas = await renderTicket({ ...props.data, theme: theme.value });
+  if (token !== renderToken) return; // 快速切换装帧时丢弃过期结果
+  ticketUrl.value = canvas.toDataURL('image/png');
 }
 
 watch(
@@ -25,7 +29,8 @@ watch(
     if (d) {
       theme.value = d.theme;
       render();
-      qrUrl.value = await QRCode.toDataURL(d.url, {
+      const QR = (await loadQrCode()).default;
+      qrUrl.value = await QR.toDataURL(d.url, {
         width: 360,
         margin: 1,
         color: { dark: '#2b2a25', light: '#f4efe3' },
