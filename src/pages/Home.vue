@@ -378,6 +378,10 @@ watch(
       chain.value = segs;
       query.value = '';
       nextTick(() => textareaEl.value?.focus());
+    } else if (chain.value.length > 0) {
+      // URL 已无接龙参数（如点击馆名回首页）：清除接龙状态
+      chain.value = [];
+      resultChain.value = null;
     }
   },
   { immediate: true },

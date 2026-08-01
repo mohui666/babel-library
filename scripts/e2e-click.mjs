@@ -462,6 +462,9 @@ try {
   await Page.navigate({ url: `${BASE}#/?draft=${bytesToB64u(new TextEncoder().encode('旧格式一句话'))}` });
   await waitFor(`document.querySelector('.chain-seg')`);
   check('旧 draft 链接兼容', await evalJs(`(document.querySelector('.chain-seg')?.textContent ?? '').includes('旧格式一句话')`));
+  await evalJs(`document.querySelector('.site-title').click(), true`);
+  await sleep(500);
+  check('点击馆名回首页清除接龙状态', await evalJs(`document.querySelectorAll('.chain-seg').length === 0`));
 
   const errors = consoleMsgs.filter((m) => m.startsWith('[error]') || m.startsWith('[exception]') || m.startsWith('[warn]'));
   check('无 Vue 警告/异常', errors.length === 0, errors.slice(0, 5).join('\n'));
