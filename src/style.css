@@ -1458,3 +1458,21 @@ body {
   letter-spacing: 0.2em;
   color: var(--accent);
 }
+
+/* ---------- 新版本提示 ---------- */
+
+.update-toast {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  background: var(--paper-card);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  box-shadow: 0 4px 16px rgba(43, 42, 37, 0.18);
+  font-size: 0.9rem;
+}

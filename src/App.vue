@@ -1,9 +1,19 @@
 <script setup lang="ts">
+import { onMounted, ref } from 'vue';
 import { RouterView, RouterLink } from 'vue-router';
 import { theme, toggleTheme } from './theme';
 import { dailyPath } from './core/daily';
+import { initPwa } from './pwa';
 
 const dailyLink = dailyPath();
+const version = __APP_VERSION__;
+const updateReload = ref<(() => void) | null>(null);
+
+onMounted(() => {
+  initPwa((reload) => {
+    updateReload.value = reload;
+  });
+});
 </script>
 
 <template>
@@ -29,7 +39,12 @@ const dailyLink = dailyPath();
       <RouterView />
     </main>
     <footer class="site-footer">
-      <p>每页内容均由其地址唯一决定 · 本馆不存储任何文本</p>
+      <p>每页内容均由其地址唯一决定 · 本馆不存储任何文本 · 构建 {{ version }}</p>
     </footer>
+  </div>
+
+  <div v-if="updateReload" class="update-toast" role="status">
+    <span>发现新版本</span>
+    <button class="btn small" @click="updateReload()">刷新体验</button>
   </div>
 </template>
