@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { bigIntToB64u, b64uToBigInt } from '../src/core/base64';
-import { SPACE_SIZE, textOfAddress, PAGE_LEN } from '../src/core/codec';
+import { SPACE_SIZE, textOfAddress, PAGE_LEN, permuteInv } from '../src/core/codec';
 import { keyToAddr } from '../src/core/address';
 import {
   search,
@@ -8,6 +8,8 @@ import {
   packRecipe,
   unpackRecipe,
   pageFromRecipe,
+  addressFromRecipeDelta,
+  textPagePath,
 } from '../src/core/search';
 import { idsToMask, maskToIds, POOLS } from '../src/core/pools';
 
@@ -51,7 +53,7 @@ describe('配方与短链接', () => {
     const query = '我今天中午吃了火锅';
     for (const r of search(query, 5)) {
       expect(r.shortPath).toBeTruthy();
-      const recipe = unpackRecipe(r.shortPath!.slice('/s/'.length));
+      const recipe = unpackRecipe(r.shortPath!.slice('/v1/s/'.length));
       expect(recipe.query).toBe(query);
       expect(pageFromRecipe(recipe).address).toBe(keyToAddr(r.key));
     }
@@ -59,10 +61,10 @@ describe('配方与短链接', () => {
 
   it('带语言池与限定文本时不变量同样成立', () => {
     for (const r of search('明月光', 3, ['cjk'])) {
-      expect(pageFromRecipe(unpackRecipe(r.shortPath!.slice(3))).address).toBe(keyToAddr(r.key));
+      expect(pageFromRecipe(unpackRecipe(r.shortPath!.slice('/v1/s/'.length))).address).toBe(keyToAddr(r.key));
     }
     for (const r of search('疑是地上霜', 3, undefined, '床前明月光疑是地上霜')) {
-      expect(pageFromRecipe(unpackRecipe(r.shortPath!.slice(3))).address).toBe(keyToAddr(r.key));
+      expect(pageFromRecipe(unpackRecipe(r.shortPath!.slice('/v1/s/'.length))).address).toBe(keyToAddr(r.key));
     }
   });
 
@@ -78,7 +80,7 @@ describe('配方与短链接', () => {
 
   it('随意翻阅的短链接也能完整重建', () => {
     const rp = randomPage();
-    const recipe = unpackRecipe(rp.shortPath.slice('/s/'.length));
+    const recipe = unpackRecipe(rp.shortPath.slice('/v1/s/'.length));
     expect(recipe.query).toBe('');
     expect(pageFromRecipe(recipe).address).toBe(rp.address);
   });
@@ -86,9 +88,40 @@ describe('配方与短链接', () => {
   it('重建出的页面逐字包含检索词', () => {
     const query = '短链接里的那句话';
     const [r] = search(query, 1);
-    const recipe = unpackRecipe(r.shortPath!.slice(3));
+    const recipe = unpackRecipe(r.shortPath!.slice('/v1/s/'.length));
     const text = [...textOfAddress(pageFromRecipe(recipe).address)];
     expect(text).toHaveLength(PAGE_LEN);
     expect(text.slice(recipe.offset, recipe.offset + [...query].length).join('')).toBe(query);
+  });
+
+  it('相对短链接：delta 解析与越界', () => {
+    const [r] = search('测试相对链接', 1);
+    const recipe = unpackRecipe(r.shortPath!.slice('/v1/s/'.length));
+    const base = addressFromRecipeDelta(recipe, 0n);
+    expect(base).toBe(keyToAddr(r.key));
+    const next = addressFromRecipeDelta(recipe, 1n);
+    expect(permuteInv(next)).toBe(permuteInv(base) + 1n);
+    const prev = addressFromRecipeDelta(recipe, -1n);
+    expect(permuteInv(prev)).toBe(permuteInv(base) - 1n);
+    // 越出图书馆边界应抛错
+    expect(() => addressFromRecipeDelta(recipe, -permuteInv(base) - 1n)).toThrow();
+    expect(() =>
+      addressFromRecipeDelta(recipe, SPACE_SIZE - permuteInv(base)),
+    ).toThrow();
+  });
+
+  it('文字页链接：短文本走 /v1/t/，解码后地址一致', () => {
+    const text = '这是一段由用户写定的文字，其余部分留白。';
+    const { path, address } = textPagePath(text);
+    expect(path.startsWith('/v1/t/')).toBe(true);
+    expect(path.length).toBeLessThan(200);
+    // 页面以原文开头
+    expect(textOfAddress(address).startsWith(text)).toBe(true);
+  });
+
+  it('文字页链接：超长文本回退为地址编码（取较短者）', () => {
+    const text = '长'.repeat(4000);
+    const { path } = textPagePath(text);
+    expect(path.startsWith('/v1/page/')).toBe(true);
   });
 });

@@ -2,8 +2,8 @@
 import { ref } from 'vue';
 import { UNICODE_VERSION, ALPHABET_SIZE } from '../core/alphabet';
 import { PAGE_LEN } from '../core/codec';
-import { addrToKey, coordsOfAddress, formatAddress } from '../core/address';
-import { validateQuery, codePointLen, fullPageAddress } from '../core/search';
+import { coordsOfAddress, formatAddress } from '../core/address';
+import { validateQuery, codePointLen, textPagePath } from '../core/search';
 
 // ---------------------------------------------------------------------------
 // 反向定位：已有一页文字 → 直接算出坐标（不足一页以空格补足，换行忽略）
@@ -31,8 +31,8 @@ function locate() {
     err.value = `反向定位只处理一整页以内的文字（${PAGE_LEN} 字），你的文字更长——请用首页的分段检索。`;
     return;
   }
-  const address = fullPageAddress(v.query);
-  link.value = `/page/${addrToKey(address)}`;
+  const { path, address } = textPagePath(v.query);
+  link.value = path;
   addrText.value = formatAddress(coordsOfAddress(address));
 }
 

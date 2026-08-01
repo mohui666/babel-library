@@ -34,7 +34,7 @@ body {
   margin: 0;
   background: var(--paper);
   color: var(--ink);
-  font-family: 'Songti SC', 'Noto Serif SC', 'STSong', 'SimSun', Georgia, 'Times New Roman', serif;
+  font-family: Georgia, 'Songti SC', 'STSong', 'Noto Serif SC', 'Source Han Serif SC', 'SimSun', serif;
   line-height: 1.8;
 }
 
@@ -776,4 +776,267 @@ body {
   font-size: 0.85rem;
   font-style: italic;
   color: var(--ink-soft);
+}
+
+/* ---------- 名著连读 / 章际导航 ---------- */
+
+.mode-switch {
+  display: flex;
+  gap: 0;
+  margin-top: 14px;
+}
+
+.mode-switch button {
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 6px 18px;
+  color: var(--ink-soft);
+  background: transparent;
+  border: 1px solid var(--line);
+  cursor: pointer;
+}
+
+.mode-switch button:first-child {
+  border-radius: 3px 0 0 3px;
+}
+
+.mode-switch button:last-child {
+  border-radius: 0 3px 3px 0;
+  border-left: none;
+}
+
+.mode-switch button.active {
+  color: var(--paper);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.reader-chapter {
+  padding: 22px 0 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.reader-title {
+  font-size: 1.05rem;
+  letter-spacing: 0.1em;
+  color: var(--accent);
+  margin: 0 0 10px;
+}
+
+.reader-text {
+  margin: 0 0 12px;
+  line-height: 2.1;
+  text-align: justify;
+}
+
+.chapter-goto {
+  opacity: 0.75;
+}
+
+.chapter-goto:hover {
+  opacity: 1;
+}
+
+.classic-nav {
+  padding-bottom: 10px;
+  margin-bottom: 12px;
+  border-bottom: 1px dashed var(--line);
+}
+
+/* ---------- 首屏精简：弱按钮 / 提交提示 / 更多定位方式 / 馆员索引 / 揭示 ---------- */
+
+.btn.weak {
+  border-color: var(--line);
+  color: var(--ink-soft);
+}
+
+.submit-hint {
+  align-self: center;
+  margin-left: 4px;
+  font-size: 0.78rem;
+}
+
+.more-ways {
+  margin-top: 22px;
+  border-top: 1px dashed var(--line);
+  padding-top: 14px;
+}
+
+.more-ways summary {
+  cursor: pointer;
+  color: var(--ink-soft);
+  font-size: 0.9rem;
+  letter-spacing: 0.08em;
+}
+
+.more-ways summary:hover {
+  color: var(--accent);
+}
+
+.more-body {
+  padding: 14px 0 4px;
+}
+
+.more-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+
+.reveal {
+  margin: 40px 0;
+  text-align: center;
+}
+
+.reveal-step {
+  margin: 6px 0;
+  color: var(--ink-soft);
+  letter-spacing: 0.2em;
+  font-size: 0.95rem;
+  animation: reveal-in 0.25s ease;
+}
+
+.reveal-step:last-child {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+@keyframes reveal-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.single-result .result-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.index-librorum {
+  margin-top: 44px;
+  border-top: 1px solid var(--line);
+  padding-top: 26px;
+}
+
+.index-title {
+  font-size: 1.1rem;
+  letter-spacing: 0.2em;
+  color: var(--accent);
+  margin: 0 0 18px;
+}
+
+.index-item {
+  margin-bottom: 30px;
+}
+
+.index-name {
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  margin: 0 0 4px;
+}
+
+.shelf {
+  margin-top: 36px;
+}
+
+.shelf-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.shelf-item {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 0;
+  padding: 12px 16px;
+}
+
+.shelf-label {
+  color: var(--ink);
+  text-decoration: none;
+  font-weight: 700;
+}
+
+.shelf-label:hover {
+  color: var(--accent);
+}
+
+.shelf-item .addr {
+  flex: 1;
+}
+
+.shelf-remove {
+  font: inherit;
+  font-size: 0.78rem;
+  color: var(--ink-soft);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 2px 6px;
+}
+
+.shelf-remove:hover {
+  color: var(--accent);
+}
+
+/* ---------- 藏书票弹窗 ---------- */
+
+.ticket-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(20, 18, 14, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 30;
+  padding: 20px;
+}
+
+.ticket-box {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 18px;
+  max-width: min(480px, 92vw);
+}
+
+.ticket-img {
+  display: block;
+  width: 100%;
+  border: 1px solid var(--line);
+}
+
+.ticket-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  margin-top: 14px;
+}
+
+/* ---------- 上下文折叠 / 真目录 ---------- */
+
+.expand-row {
+  text-align: center;
+  padding-top: 14px;
+}
+
+.true-catalogue {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent-soft), 0 1px 8px rgba(43, 42, 37, 0.12);
+}
+
+.true-catalogue-addr {
+  color: var(--accent);
+  letter-spacing: 0.3em;
+  font-weight: 700;
 }

@@ -21,9 +21,9 @@ describe('书页翻页', () => {
 
     const router = createRouter({
       history: createMemoryHistory(),
-      routes: [{ path: '/page/:key', component: Page }],
+      routes: [{ path: '/v1/page/:key', component: Page }],
     });
-    router.push(`/page/${key}`);
+    router.push(`/v1/page/${key}`);
     await router.isReady();
 
     const wrapper = mount(Page, { global: { plugins: [router] } });

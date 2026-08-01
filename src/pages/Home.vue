@@ -13,19 +13,24 @@ import {
 import { POOLS } from '../core/pools';
 import { CLASSICS } from '../classics/books';
 import { PAGE_LEN } from '../core/codec';
-import {
-  HERO_QUOTES,
-  RESULT_APHORISMS,
-  pickRandom,
-} from '../core/aphorisms';
+import { HERO_QUOTES, RESULT_APHORISMS, pickRandom } from '../core/aphorisms';
+import { dailyPath } from '../core/daily';
+import { loadShelf, removeFromShelf, type ShelfItem } from '../core/shelf';
 
 const router = useRouter();
 const query = ref('');
 const error = ref('');
 const badChars = ref<string[]>([]);
-const results = ref<SearchResult[]>([]);
-const searched = ref(false);
+
+// ---------------------------------------------------------------------------
+// 单结果揭示：一次只定位一页，坐标逐层揭晓
+// ---------------------------------------------------------------------------
+
+const currentResult = ref<SearchResult | null>(null);
+const revealing = ref(false);
+const revealSteps = ref<string[]>([]);
 const lastQuery = ref('');
+const resultAphorism = ref('');
 
 /** 乱码填充的语言池（默认全选 = 全字符集均匀；选择持久化到本地） */
 const pools = POOLS;
@@ -59,61 +64,7 @@ watch(
   { deep: true },
 );
 
-/** 首屏例句 */
-const examples = [
-  '一句你从未说出口的话',
-  '你明天将会说的第一句话',
-  '宇宙终极问题的答案',
-];
-
-/** 馆藏名著 */
-const classics = CLASSICS;
-
-/** 首页轮换引言与检索结果点破句 */
-const heroQuote = pickRandom(HERO_QUOTES);
-const resultAphorism = ref('');
-
-/** 辩护书：馆中必有为你一生辩护的一页 */
-const vname = ref('');
-const vindication = ref<SearchResult | null>(null);
-
-function findVindication() {
-  if (selectedPools.value.length === 0 && !customFillActive.value) {
-    error.value = '请至少选择一种填充文字，或输入一段限定文本。';
-    return;
-  }
-  error.value = '';
-  const name = vname.value.trim() || '无名者';
-  const q = `${name}的一生，已经得到辩护。`;
-  const f = fillArgs();
-  const [r] = search(q, 1, f.poolIds, f.customText);
-  vindication.value = r;
-}
-
-function tryExample(s: string) {
-  query.value = s;
-  runSearch();
-}
-
-/** 分段定位状态 */
-interface ChunkEntry {
-  no: number;
-  chars: number;
-  key: string;
-  shortPath?: string;
-  addressText: string;
-  preview: string;
-  query: string;
-}
-const chunkResults = ref<ChunkEntry[]>([]);
-const chunkProgress = ref('');
-const chunkTotalChars = ref(0);
-const fileInput = ref<HTMLInputElement>();
-
-/** 递增的运行号：开始新检索作废旧的分段循环 */
-let runId = 0;
-
-/** 全选时 poolIds 传 undefined，走全字符集均匀采样；限定文本优先于语言池 */
+/** 限定文本：乱码只使用其中出现过的字符（优先于语言池） */
 const CUSTOM_FILL_KEY = 'babel:custom-fill';
 const customFill = ref<string>(
   (() => {
@@ -140,17 +91,37 @@ function fillArgs(): { poolIds?: string[]; customText?: string } {
   };
 }
 
+/** 分段定位状态 */
+interface ChunkEntry {
+  no: number;
+  chars: number;
+  key: string;
+  shortPath?: string;
+  addressText: string;
+  preview: string;
+  query: string;
+}
+const chunkResults = ref<ChunkEntry[]>([]);
+const chunkProgress = ref('');
+const chunkTotalChars = ref(0);
+const fileInput = ref<HTMLInputElement>();
+
+/** 递增的运行号：开始新检索作废旧流程 */
+let runId = 0;
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 function clearOutputs() {
-  results.value = [];
+  currentResult.value = null;
+  revealing.value = false;
+  revealSteps.value = [];
   chunkResults.value = [];
   chunkProgress.value = '';
-  searched.value = false;
 }
 
 function runSearch() {
   const id = ++runId;
   if (selectedPools.value.length === 0 && !customFillActive.value) {
-    error.value = '请至少选择一种填充文字，或输入一段限定文本。';
+    error.value = '请至少选择一种书写体系，或输入一段限定字符集。';
     badChars.value = [];
     clearOutputs();
     return;
@@ -173,14 +144,10 @@ function runSearch() {
     return;
   }
   if (chunks.length === 1) {
-    // 单页检索：返回 10 处藏书
-    chunkResults.value = [];
     lastQuery.value = chunks[0];
     const f = fillArgs();
-    results.value = search(chunks[0], 10, f.poolIds, f.customText);
-    resultAphorism.value = pickRandom(RESULT_APHORISMS);
-    vindication.value = null;
-    searched.value = true;
+    const [r] = search(chunks[0], 1, f.poolIds, f.customText);
+    reveal(r, id);
     return;
   }
   if (chunks.length > MAX_CHUNKS) {
@@ -191,15 +158,35 @@ function runSearch() {
   locateChunks(chunks, id);
 }
 
+/** 坐标逐层揭晓，然后呈现唯一结果 */
+async function reveal(r: SearchResult, id: number) {
+  chunkResults.value = [];
+  currentResult.value = null;
+  revealing.value = true;
+  revealSteps.value = [];
+  const steps = ['正在确定馆', '正在确定楼层', '正在确定室', '正在确定架', '正在确定册', '正在确定页'];
+  for (const s of steps) {
+    if (id !== runId) return;
+    revealSteps.value.push(`${s}……`);
+    await sleep(240);
+  }
+  revealSteps.value.push('找到了。');
+  await sleep(360);
+  if (id !== runId) return;
+  revealing.value = false;
+  currentResult.value = r;
+  resultAphorism.value = pickRandom(RESULT_APHORISMS);
+}
+
 /** 分段定位：每段各算出一页真实坐标，逐段报告进度 */
 async function locateChunks(chunks: string[], id: number) {
-  results.value = [];
-  searched.value = false;
+  currentResult.value = null;
+  revealing.value = false;
   chunkResults.value = [];
   chunkTotalChars.value = chunks.reduce((s, c) => s + codePointLen(c), 0);
   const { poolIds, customText } = fillArgs();
   for (let i = 0; i < chunks.length; i++) {
-    if (id !== runId) return; // 已被更新的检索取代
+    if (id !== runId) return;
     chunkProgress.value = `正在定位 ${i + 1} / ${chunks.length} 段…`;
     const [r] = search(chunks[i], 1, poolIds, customText);
     chunkResults.value.push({
@@ -211,16 +198,9 @@ async function locateChunks(chunks: string[], id: number) {
       preview: [...chunks[i]].slice(0, 60).join(''),
       query: chunks[i],
     });
-    await new Promise((resolve) => setTimeout(resolve, 0)); // 让出主线程刷新进度
+    await sleep(0);
   }
   chunkProgress.value = '';
-}
-
-/** 回车检索（输入法组词中按回车是选字，不触发） */
-function onEnter(e: KeyboardEvent) {
-  if (e.isComposing) return;
-  e.preventDefault();
-  runSearch();
 }
 
 /** 剔除报错中列出的字符后重试（只剔除报错项，换行等结构保留） */
@@ -247,7 +227,7 @@ async function readFileText(file: File): Promise<string> {
 async function onFile(e: Event) {
   const input = e.target as HTMLInputElement;
   const file = input.files?.[0];
-  input.value = ''; // 允许重复选择同一文件
+  input.value = '';
   if (!file) return;
   try {
     query.value = await readFileText(file);
@@ -260,7 +240,7 @@ async function onFile(e: Event) {
 
 function roam() {
   if (selectedPools.value.length === 0 && !customFillActive.value) {
-    error.value = '请至少选择一种填充文字，或输入一段限定文本。';
+    error.value = '请至少选择一种书写体系，或输入一段限定字符集。';
     return;
   }
   const f = fillArgs();
@@ -278,16 +258,58 @@ function segments(r: SearchResult): [string, string, string] {
   ];
 }
 
-/** 分段结果的打开链接：优先短链接；否则长链接按段长决定是否带高亮 */
-function chunkLink(c: ChunkEntry): string {
-  if (c.shortPath) return c.shortPath;
-  const base = `/page/${c.key}`;
-  return c.chars <= 2000 ? `${base}?q=${encodeURIComponent(c.query)}` : base;
+function resultLink(r: SearchResult | ChunkEntry): string {
+  if (r.shortPath) return r.shortPath;
+  return `/v1/page/${r.key}?q=${encodeURIComponent(r.query)}`;
 }
 
-const singleResult = computed(() => searched.value && results.value.length > 0);
+// ---------------------------------------------------------------------------
+// 首屏例句 / 辩护书 / 今日之页 / 馆员标记 / 我的藏书
+// ---------------------------------------------------------------------------
+
+const examples = ['一句你从未说出口的话', '你明天将会说的第一句话', '宇宙终极问题的答案'];
+
+function tryExample(s: string) {
+  query.value = s;
+  runSearch();
+}
+
+const heroQuote = pickRandom(HERO_QUOTES);
+
+const vname = ref('');
+const vindication = ref<SearchResult | null>(null);
+
+function findVindication() {
+  if (selectedPools.value.length === 0 && !customFillActive.value) {
+    error.value = '请至少选择一种书写体系，或输入一段限定字符集。';
+    return;
+  }
+  error.value = '';
+  const raw = vname.value.trim();
+  // 短输入视为名字（馆方模板）；长输入视为你自己写下的辩词，直接定位
+  const q = raw.length === 0 ? '无名者的一生，已经得到辩护。'
+    : codePointLen(raw) <= 10 ? `${raw}的一生，已经得到辩护。`
+    : raw;
+  const f = fillArgs();
+  const [r] = search(q, 1, f.poolIds, f.customText);
+  vindication.value = r;
+}
+
+const dailyLink = dailyPath();
+
+/** 馆员已经标记的几页（首页只示三） */
+const markedPages = CLASSICS.filter((b) =>
+  ['daodejing', 'sunzi', 'tang-shi'].includes(b.id),
+);
+
+const shelfItems = ref<ShelfItem[]>(loadShelf());
+
+function removeShelfItem(path: string) {
+  shelfItems.value = removeFromShelf(shelfItems.value, path);
+}
+
 const showExamples = computed(
-  () => !singleResult.value && chunkResults.value.length === 0 && !chunkProgress.value,
+  () => !currentResult.value && !revealing.value && chunkResults.value.length === 0 && !chunkProgress.value,
 );
 </script>
 
@@ -297,77 +319,27 @@ const showExamples = computed(
       <p>「{{ heroQuote.text }}」</p>
       <footer>—— {{ heroQuote.cite }}</footer>
     </blockquote>
-    <p class="intro">
-      这座图书馆收藏着所有可能写出的文字。你此刻想到的任何一句话——说过的话、未说出的话、
-      明天才会写下的话——都早已端坐在某本书的某一页上。写下它，或呈上一整卷文稿，我带你去那一页。
-    </p>
-    <details class="canon">
-      <summary>馆中都有些什么？</summary>
-      <p>
-        「未来的详尽历史、大天使们的自传、图书馆的真实目录、成千上万的假目录、
-        对真目录之谬误的证明、巴西里德斯的诺斯替福音、对该福音的评注、对该福音评注的评注、
-        你死亡的真实记录、每一本书在所有语言中的译本、每一本书在所有书中的插页——一切。」
-      </p>
-      <footer>—— 博尔赫斯《巴别图书馆》</footer>
-    </details>
+    <p class="intro">你写下的任何一句话，都早已存在于某一页。</p>
   </section>
 
   <section class="search-box">
     <textarea
       v-model="query"
       rows="3"
-      :placeholder="`写下任意文字（超过 ${PAGE_LEN} 字将自动分段定位）……`"
-      @keydown.enter="onEnter"
+      placeholder="写下一句话……"
+      @keydown.ctrl.enter.prevent="runSearch"
+      @keydown.meta.enter.prevent="runSearch"
     ></textarea>
     <div class="search-actions">
-      <button class="btn primary" @click="runSearch">检索全馆</button>
-      <button class="btn" @click="fileInput?.click()">上传文本</button>
-      <button class="btn" @click="roam">随意翻阅</button>
-      <input
-        ref="fileInput"
-        type="file"
-        accept=".txt,.md,.text,.log"
-        class="hidden-file"
-        @change="onFile"
-      />
+      <button class="btn primary" @click="runSearch">定位这句话</button>
+      <button class="btn weak" @click="roam">随意翻开一页</button>
+      <span class="hint submit-hint">Ctrl + Enter 定位</span>
     </div>
-    <div class="pool-picker" :class="{ dimmed: customFillActive }">
-      <span class="pool-label">乱码填充：</span>
-      <label v-for="p in pools" :key="p.id" class="pool-item">
-        <input type="checkbox" v-model="selectedPools" :value="p.id" />
-        {{ p.label }}
-      </label>
-    </div>
-    <div class="custom-fill">
-      <span class="pool-label">或限定为：</span>
-      <input
-        v-model="customFill"
-        class="custom-fill-input"
-        type="text"
-        placeholder="输入一段文字，乱码只使用其中的字符（如《静夜思》）"
-      />
-    </div>
-    <p class="hint pool-hint">
-      只决定检索结果中乱码部分的语言，不限制你能检索的文字；填写限定文本时优先于上方勾选。
-    </p>
     <p v-if="error" class="error">
       {{ error }}
       <button v-if="badChars.length" class="btn small" @click="stripBadChars">
-        剔除这些符号并检索
+        剔除这些符号并定位
       </button>
-    </p>
-    <div class="vindication">
-      <input
-        v-model="vname"
-        class="vname-input"
-        type="text"
-        placeholder="写下你的名字……"
-        @keydown.enter.prevent="findVindication"
-      />
-      <button class="btn" @click="findVindication">寻找我的辩护书</button>
-    </div>
-    <p class="hint pool-hint">
-      馆中有一页为你的一生辩护。它必然存在——凡可被写下的辩护，自无始以来俱在馆中。
     </p>
     <div v-if="showExamples" class="examples">
       <span class="hint">不知从何找起？</span>
@@ -377,54 +349,26 @@ const showExamples = computed(
     </div>
   </section>
 
-  <article v-if="vindication" class="card vindication-card">
-    <p class="vindication-line">
-      你的辩护书找到了。它并非刚刚写成——自无始以来，它就在那一页上。
-    </p>
+  <div v-if="revealing" class="reveal">
+    <p v-for="(s, i) in revealSteps" :key="i" class="reveal-step">{{ s }}</p>
+  </div>
+
+  <article v-if="currentResult" class="card result single-result">
+    <p class="aphorism">{{ resultAphorism }}</p>
     <p class="snippet">
-      <template v-for="(seg, i) in [segments(vindication)]" :key="i"
+      <template v-for="(seg, i) in [segments(currentResult)]" :key="i"
         >{{ seg[0] }}<mark>{{ seg[1] }}</mark
         >{{ seg[2] }}</template
       >
     </p>
     <div class="result-foot">
-      <span class="addr">{{ vindication.addressText }}</span>
-      <RouterLink
-        class="btn small"
-        :to="vindication.shortPath ?? `/page/${vindication.key}?q=${encodeURIComponent(vindication.query)}`"
-      >
-        翻开你的辩护书
-      </RouterLink>
+      <span class="addr">{{ currentResult.addressText }}</span>
+      <div class="result-actions">
+        <RouterLink class="btn primary" :to="resultLink(currentResult)">翻开这一页</RouterLink>
+        <button class="btn small" @click="runSearch">在图书馆的另一处寻找同一句话</button>
+      </div>
     </div>
   </article>
-
-  <section v-if="singleResult" class="results">
-    <p class="results-head">
-      「{{ lastQuery }}」——在馆中寻得 {{ results.length }} 处藏书，每一处都真实存在：
-    </p>
-    <p class="aphorism">{{ resultAphorism }}</p>
-    <article v-for="r in results" :key="r.key" class="card result">
-      <p class="snippet">
-        <template v-for="(seg, i) in [segments(r)]" :key="i"
-          >{{ seg[0] }}<mark>{{ seg[1] }}</mark
-          >{{ seg[2] }}</template
-        >
-      </p>
-      <div class="result-foot">
-        <span class="addr">{{ r.addressText }}</span>
-        <RouterLink
-          class="btn small"
-          :to="r.shortPath ?? `/page/${r.key}?q=${encodeURIComponent(r.query)}`"
-        >
-          翻开这一页
-        </RouterLink>
-      </div>
-    </article>
-    <div class="results-more">
-      <button class="btn" @click="runSearch">换一批</button>
-      <p class="hint">同一句话在馆中还有无数处藏书，每次更换都是另一批真实的坐标。</p>
-    </div>
-  </section>
 
   <section v-if="chunkProgress || chunkResults.length" class="results">
     <p v-if="chunkProgress" class="results-head">{{ chunkProgress }}</p>
@@ -439,24 +383,107 @@ const showExamples = computed(
       <p class="snippet">第 {{ c.no }} 段（{{ c.chars }} 字）：{{ c.preview }}……</p>
       <div class="result-foot">
         <span class="addr">{{ c.addressText }}</span>
-        <RouterLink class="btn small" :to="chunkLink(c)">翻开这一页</RouterLink>
+        <RouterLink class="btn small" :to="resultLink(c)">翻开这一页</RouterLink>
       </div>
     </article>
   </section>
 
-  <section class="classics">
-    <h2 class="classics-title">馆藏名著</h2>
-    <p class="hint">这些书并非被人写下，而是早已在馆中，如今不过是被发现。</p>
-    <div class="classic-list">
-      <RouterLink
-        v-for="b in classics"
-        :key="b.id"
-        class="card classic-card"
-        :to="`/classic/${b.id}`"
-      >
-        <span class="classic-name">{{ b.id === 'sonnets' ? b.title : `《${b.title}》` }}</span>
-        <span class="classic-meta">{{ b.author }} · {{ b.chapters.length }} 页</span>
-      </RouterLink>
+  <details class="more-ways">
+    <summary>更多定位方式</summary>
+    <div class="more-body">
+      <div class="more-row">
+        <button class="btn small" @click="fileInput?.click()">呈上一卷文稿</button>
+        <span class="hint">.txt / .md（UTF-8 或 GBK），超过一页自动分段定位</span>
+        <input
+          ref="fileInput"
+          type="file"
+          accept=".txt,.md,.text,.log"
+          class="hidden-file"
+          @change="onFile"
+        />
+      </div>
+      <div class="pool-picker" :class="{ dimmed: customFillActive }">
+        <span class="pool-label">页面书写体系：</span>
+        <label v-for="p in pools" :key="p.id" class="pool-item">
+          <input type="checkbox" v-model="selectedPools" :value="p.id" />
+          {{ p.label }}
+        </label>
+      </div>
+      <div class="custom-fill">
+        <span class="pool-label">限定字符集：</span>
+        <input
+          v-model="customFill"
+          class="custom-fill-input"
+          type="text"
+          placeholder="输入一段文字，书页只使用其中的字符（如《静夜思》）"
+        />
+      </div>
+      <p class="hint pool-hint">以上只决定书页其余部分的文字面貌，不限制你能定位的内容。</p>
+    </div>
+  </details>
+
+  <section class="index-librorum">
+    <h2 class="index-title">馆员索引</h2>
+
+    <div class="index-item">
+      <p class="index-name">辩护书</p>
+      <p class="hint">凡可被写下的辩护，必然写在某一页上——包括为你的那一份。</p>
+      <div class="vindication">
+        <input
+          v-model="vname"
+          class="vname-input"
+          type="text"
+          placeholder="写下你的名字，或一句希望图书馆替你保存的辩词"
+          @keydown.enter.prevent="findVindication"
+        />
+        <button class="btn small" @click="findVindication">寻找辩护书</button>
+      </div>
+      <article v-if="vindication" class="card vindication-card">
+        <p class="vindication-line">它并非刚刚写成——自无始以来，就在那一页上。</p>
+        <p class="snippet">
+          <template v-for="(seg, i) in [segments(vindication)]" :key="i"
+            >{{ seg[0] }}<mark>{{ seg[1] }}</mark
+            >{{ seg[2] }}</template
+          >
+        </p>
+        <div class="result-foot">
+          <span class="addr">{{ vindication.addressText }}</span>
+          <RouterLink class="btn small" :to="resultLink(vindication)">翻开这一页</RouterLink>
+        </div>
+      </article>
+    </div>
+
+    <div class="index-item">
+      <p class="index-name">今日之页</p>
+      <p class="hint">今日全馆共同开放此页，零点更替。</p>
+      <RouterLink class="btn small" :to="dailyLink">翻开今日之页</RouterLink>
+    </div>
+
+    <div class="index-item">
+      <p class="index-name">馆员已经标记的几页</p>
+      <p class="hint">在不可计数的书页中，馆员留下了少量可辨认的坐标。</p>
+      <div class="classic-list">
+        <RouterLink
+          v-for="b in markedPages"
+          :key="b.id"
+          class="card classic-card"
+          :to="`/classic/${b.id}`"
+        >
+          <span class="classic-name">《{{ b.title }}》</span>
+          <span class="classic-meta">{{ b.author }} · {{ b.chapters.length }} 页</span>
+        </RouterLink>
+      </div>
+    </div>
+  </section>
+
+  <section v-if="shelfItems.length" class="shelf">
+    <h2 class="index-title">我的藏书</h2>
+    <div class="shelf-list">
+      <div v-for="item in shelfItems" :key="item.path" class="card shelf-item">
+        <RouterLink :to="item.path" class="shelf-label">{{ item.label }}</RouterLink>
+        <span class="addr">{{ item.addressText }}</span>
+        <button class="shelf-remove" @click="removeShelfItem(item.path)">移出</button>
+      </div>
     </div>
   </section>
 </template>

@@ -1,5 +1,13 @@
 import { ALPHABET_SIZE, indexOfCodePoint } from './alphabet';
-import { PAGE_LEN, addressOfIndices, indicesToText, textToIndices } from './codec';
+import {
+  PAGE_LEN,
+  SPACE_SIZE,
+  addressOfIndices,
+  indicesToText,
+  textToIndices,
+  permute,
+  permuteInv,
+} from './codec';
 import { addrToKey, coordsOfAddress, formatAddress } from './address';
 import { POOLS, poolsForIds, poolFromText, idsToMask, maskToIds } from './pools';
 import { bytesToB64u, b64uToBytes } from './base64';
@@ -222,6 +230,18 @@ export function pageFromRecipe(r: Recipe): { address: bigint } {
   return { address: addressOfIndices(page) };
 }
 
+/**
+ * 相对短链接：配方页向前/向后第 delta 页的地址。
+ * 任意乱码页的内容不可压缩，但可以这样「引用」它——
+ * 翻页链与书籍页因此都能保持短链接。
+ */
+export function addressFromRecipeDelta(r: Recipe, delta: bigint): bigint {
+  const base = pageFromRecipe(r).address;
+  const pn = permuteInv(base) + delta;
+  if (pn < 0n || pn >= SPACE_SIZE) throw new RangeError('超出图书馆边界');
+  return permute(pn);
+}
+
 export interface SearchResult {
   /** 页地址的 URL key（规范长链接用） */
   key: string;
@@ -268,10 +288,10 @@ export function search(
     const start = Math.max(0, offset - SNIPPET_CONTEXT);
     const end = Math.min(PAGE_LEN, offset + qLen + SNIPPET_CONTEXT);
     const key = addrToKey(address);
-    const shortPath = `/s/${packRecipe({ seed, offset, poolMask, customText: ct, query })}`;
+    const shortPath = `/v1/s/${packRecipe({ seed, offset, poolMask, customText: ct, query })}`;
     results.push({
       key,
-      shortPath: shortPath.length < `/page/${key}`.length ? shortPath : undefined,
+      shortPath: shortPath.length < `/v1/page/${key}`.length ? shortPath : undefined,
       addressText: formatAddress(coordsOfAddress(address)),
       snippet: indicesToText(page.slice(start, end)),
       markStart: offset - start,
@@ -307,9 +327,22 @@ export function randomPage(
   const address = addressOfIndices(page);
   return {
     key: addrToKey(address),
-    shortPath: `/s/${packRecipe({ seed, offset: 0, poolMask, customText: ct, query: '' })}`,
+    shortPath: `/v1/s/${packRecipe({ seed, offset: 0, poolMask, customText: ct, query: '' })}`,
     address,
   };
+}
+
+/**
+ * 文字页链接：页面完全由给定文字决定（不足一页以空格补足）。
+ * 链接携带文字本身（/v1/t/），其长度即文字长度；
+ * 文字极长时地址编码反而更紧凑，取较短者。
+ */
+export function textPagePath(text: string): { path: string; address: bigint } {
+  const address = fullPageAddress(text);
+  const canonical = `/v1/page/${addrToKey(address)}`;
+  const b64 = bytesToB64u(new TextEncoder().encode(text.normalize('NFC')));
+  const t = `/v1/t/${b64}`;
+  return { path: t.length < canonical.length ? t : canonical, address };
 }
 
 // ---------------------------------------------------------------------------

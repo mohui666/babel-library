@@ -3,19 +3,33 @@ import { computed, watchEffect } from 'vue';
 import { useRoute } from 'vue-router';
 import { SPACE_SIZE, permute, permuteInv } from '../core/codec';
 import { addrToKey, keyToAddr, decompose, formatBook, BOOK_PAGES } from '../core/address';
+import { unpackRecipe, pageFromRecipe } from '../core/search';
 
 const route = useRoute();
 
 const GROUP = 100;
 
+/**
+ * 书籍页两种入口：
+ * - 配方上下文（/s/:payload/book）：页格保持相对短链接
+ * - 规范长链接（/book/:key）
+ */
 const state = computed(() => {
   try {
+    if (route.name === 'recipeBook') {
+      const payload = route.params.payload as string;
+      const r = unpackRecipe(payload);
+      const pageNumber = permuteInv(pageFromRecipe(r).address);
+      const coords = decompose(pageNumber);
+      const bookBase = pageNumber - BigInt(coords.page);
+      return { ok: true as const, coords, bookBase, pageNumber, payload };
+    }
     const address = keyToAddr(route.params.key as string);
     if (address < 0n || address >= SPACE_SIZE) return { ok: false as const };
     const pageNumber = permuteInv(address);
     const coords = decompose(pageNumber);
     const bookBase = pageNumber - BigInt(coords.page);
-    return { ok: true as const, coords, bookBase };
+    return { ok: true as const, coords, bookBase, pageNumber, payload: null };
   } catch {
     return { ok: false as const };
   }
@@ -29,13 +43,18 @@ const from = computed(() => {
 
 const pages = computed(() => {
   if (!state.value.ok) return [];
-  const list: { no: number; key: string }[] = [];
+  const s = state.value;
+  const list: { no: number; to: string }[] = [];
   const end = Math.min(from.value + GROUP, BOOK_PAGES);
   for (let i = from.value; i < end; i++) {
-    list.push({
-      no: i + 1,
-      key: addrToKey(permute(state.value.bookBase + BigInt(i))),
-    });
+    const target = s.bookBase + BigInt(i);
+    const to = s.payload
+      ? (() => {
+          const d = target - s.pageNumber;
+          return d === 0n ? `/v1/s/${s.payload}` : `/v1/s/${s.payload}/d/${d}`;
+        })()
+      : `/v1/page/${addrToKey(permute(target))}`;
+    list.push({ no: i + 1, to });
   }
   return list;
 });
@@ -65,12 +84,7 @@ watchEffect(() => {
     </header>
 
     <div class="page-index">
-      <RouterLink
-        v-for="p in pages"
-        :key="p.no"
-        class="page-cell"
-        :to="`/page/${p.key}`"
-      >
+      <RouterLink v-for="p in pages" :key="p.no" class="page-cell" :to="p.to">
         {{ p.no }}
       </RouterLink>
     </div>
@@ -79,14 +93,14 @@ watchEffect(() => {
       <RouterLink
         v-if="prevFrom !== null"
         class="btn small"
-        :to="`/book/${route.params.key}?from=${prevFrom}`"
+        :to="`${route.path}?from=${prevFrom}`"
         >← 前 {{ GROUP }} 页</RouterLink
       >
       <span class="page-pos">{{ from + 1 }} – {{ Math.min(from + GROUP, BOOK_PAGES) }}</span>
       <RouterLink
         v-if="nextFrom !== null"
         class="btn small"
-        :to="`/book/${route.params.key}?from=${nextFrom}`"
+        :to="`${route.path}?from=${nextFrom}`"
         >后 {{ GROUP }} 页 →</RouterLink
       >
     </div>
