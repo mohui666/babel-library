@@ -1037,13 +1037,18 @@ body {
   background: var(--paper);
   border: 1px solid var(--line);
   border-radius: 4px;
-  padding: 18px;
+  padding: 16px;
   max-width: min(480px, 92vw);
+  max-height: 92vh;
+  overflow-y: auto;
 }
 
 .ticket-img {
   display: block;
-  width: 100%;
+  margin: 0 auto;
+  max-width: 100%;
+  max-height: 46vh;
+  width: auto;
   border: 1px solid var(--line);
 }
 
@@ -1485,8 +1490,8 @@ body {
 }
 
 .share-qr img {
-  width: 180px;
-  height: 180px;
+  width: 148px;
+  height: 148px;
   border: 1px solid var(--line);
   border-radius: 4px;
   background: #f4efe3;
