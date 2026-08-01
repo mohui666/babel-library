@@ -190,6 +190,41 @@ function dateStr(): string {
   return `${t.getFullYear()} 年 ${t.getMonth() + 1} 月 ${t.getDate()} 日`;
 }
 
+/** 中部省略号截断（按码位） */
+function ellipsizeMiddle(s: string, maxChars: number): string {
+  const a = [...s];
+  if (a.length <= maxChars) return s;
+  const keep = maxChars - 1;
+  return `${a.slice(0, Math.ceil(keep / 2)).join('')}…${a.slice(-Math.floor(keep / 2)).join('')}`;
+}
+
+/** 居中绘制文本：先缩字号（至 minSize），仍超宽则中部截断 */
+function fitCenteredText(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  cx: number,
+  y: number,
+  maxWidth: number,
+  startSize: number,
+  p: Palette,
+  minSize = 18,
+) {
+  let size = startSize;
+  let t = text;
+  ctx.textAlign = 'center';
+  ctx.fillStyle = p.soft;
+  for (;;) {
+    ctx.font = `${size}px ${SERIF}`;
+    if (ctx.measureText(t).width <= maxWidth) break;
+    if (size > minSize) {
+      size -= 2;
+    } else {
+      t = ellipsizeMiddle(t, [...t].length - 4);
+    }
+  }
+  ctx.fillText(t, cx, y);
+}
+
 // ---------------------------------------------------------------------------
 
 function renderCertificate(d: TicketData, dark = false): HTMLCanvasElement {
@@ -201,6 +236,9 @@ function renderCertificate(d: TicketData, dark = false): HTMLCanvasElement {
   const ctx = canvas.getContext('2d')!;
   const p = dark ? DARK : LIGHT;
   drawFrame(ctx, W, H, p);
+
+  // 印章居右上内框，远离正文
+  drawSeal(ctx, W - 226, 84, p);
 
   ctx.textAlign = 'center';
   ctx.fillStyle = p.soft;
@@ -220,26 +258,28 @@ function renderCertificate(d: TicketData, dark = false): HTMLCanvasElement {
 
   drawNoiseLines(ctx, d.lines.slice(0, 3), 130, endY + 130, W - 260, p);
 
+  // 坐标与日期：超宽自动缩字号/截断
+  fitCenteredText(ctx, d.addressText, W / 2, 1032, W - 240, 26, p);
+  ctx.textAlign = 'center';
   ctx.fillStyle = p.soft;
-  ctx.font = `26px ${SERIF}`;
-  ctx.fillText(d.addressText, W / 2, 1120);
-  ctx.fillText(dateStr(), W / 2, 1160);
+  ctx.font = `24px ${SERIF}`;
+  ctx.fillText(dateStr(), W / 2, 1074);
 
-  drawQr(ctx, d.url, 130, 1180, 150, p);
+  // 底部带：左二维码、右行动文案，均在内框（y ≤ 1298）之内
   ctx.textAlign = 'left';
   ctx.fillStyle = p.soft;
   ctx.font = `22px ${SERIF}`;
-  ctx.fillText('扫码打开这一页', 130, 1160);
+  ctx.fillText('扫码打开这一页', 110, 1106);
+  drawQr(ctx, d.url, 110, 1130, 150, p);
 
   ctx.textAlign = 'right';
   ctx.fillStyle = p.accent;
-  ctx.font = `bold 30px ${SERIF}`;
-  ctx.fillText('写下你的那一句 →', W - 130, 1260);
+  ctx.font = `bold 28px ${SERIF}`;
+  ctx.fillText('写下你的那一句 →', W - 110, 1206);
   ctx.fillStyle = p.soft;
-  ctx.font = `24px ${SERIF}`;
-  ctx.fillText(d.host, W - 130, 1296);
+  ctx.font = `22px ${SERIF}`;
+  ctx.fillText(d.host, W - 110, 1246);
 
-  drawSeal(ctx, W - 280, 300, p);
   return canvas;
 }
 
@@ -303,9 +343,7 @@ function renderClassicTicket(d: TicketData): HTMLCanvasElement {
   }
 
   ctx.textAlign = 'center';
-  ctx.fillStyle = p.soft;
-  ctx.font = `26px ${SERIF}`;
-  ctx.fillText(d.addressText, W / 2, 1160);
+  fitCenteredText(ctx, d.addressText, W / 2, 1160, W - 240, 26, p);
 
   drawSeal(ctx, W - 240, H - 260, p);
 
