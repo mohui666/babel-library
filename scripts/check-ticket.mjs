@@ -64,7 +64,13 @@ try {
   await sleep(600);
   const src = await evalJs(`document.querySelector('.ticket-img').src`);
   writeFileSync('/tmp/ticket-check.png', Buffer.from(src.split(',')[1], 'base64'));
-  console.log('saved /tmp/ticket-check.png');
+
+  // 原始藏书票装帧
+  await evalJs(`[...document.querySelectorAll('.ticket-themes button')].find(b => b.textContent.includes('原始藏书票'))?.click(), true`);
+  await sleep(500);
+  const src2 = await evalJs(`document.querySelector('.ticket-img').src`);
+  writeFileSync('/tmp/ticket-check-classic.png', Buffer.from(src2.split(',')[1], 'base64'));
+  console.log('saved /tmp/ticket-check.png + ticket-check-classic.png');
 } finally {
   if (client) {
     try { await client.Browser.close(); } catch {}

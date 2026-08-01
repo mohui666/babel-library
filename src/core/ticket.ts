@@ -301,6 +301,9 @@ function renderClassicTicket(d: TicketData): HTMLCanvasElement {
   ctx.font = `32px ${SERIF}`;
   ctx.fillText('藏 書 票', W / 2, 224);
 
+  // 印章居右上内框，避开标题与坐标行
+  drawSeal(ctx, W - 226, 84, p);
+
   ctx.strokeStyle = '#c9bfa4';
   ctx.beginPath();
   ctx.moveTo(160, 262);
@@ -344,8 +347,6 @@ function renderClassicTicket(d: TicketData): HTMLCanvasElement {
 
   ctx.textAlign = 'center';
   fitCenteredText(ctx, d.addressText, W / 2, 1160, W - 240, 26, p);
-
-  drawSeal(ctx, W - 240, H - 260, p);
 
   ctx.font = `22px ${SERIF}`;
   ctx.fillText(`${d.host} · ${dateStr()}`, W / 2, H - 78);
