@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
-import { useRouter } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import {
   validateQuery,
   search,
@@ -13,10 +13,12 @@ import {
 import { POOLS } from '../core/pools';
 import { CLASSICS } from '../classics/books';
 import { PAGE_LEN } from '../core/codec';
+import { bytesToB64u, b64uToBytes } from '../core/base64';
 import { HERO_QUOTES, RESULT_APHORISMS, pickRandom } from '../core/aphorisms';
 import { dailyPath } from '../core/daily';
 import { loadShelf, removeFromShelf, type ShelfItem } from '../core/shelf';
 
+const route = useRoute();
 const router = useRouter();
 const query = ref('');
 const error = ref('');
@@ -118,7 +120,7 @@ function clearOutputs() {
   chunkProgress.value = '';
 }
 
-function runSearch() {
+function doSearch() {
   const id = ++runId;
   if (selectedPools.value.length === 0 && !customFillActive.value) {
     error.value = '请至少选择一种书写体系，或输入一段限定字符集。';
@@ -158,24 +160,50 @@ function runSearch() {
   locateChunks(chunks, id);
 }
 
-/** 坐标逐层揭晓，然后呈现唯一结果 */
+/** 坐标逐层揭晓，然后呈现唯一结果。
+ *  首次完整仪式；后续快速（约 0.6s）；reduced-motion 即时；点击可跳过 */
+let revealCount = 0;
+let skipReveal = false;
+const resultEl = ref<HTMLElement>();
+const reducedMotion =
+  typeof window !== 'undefined' &&
+  window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
 async function reveal(r: SearchResult, id: number) {
   chunkResults.value = [];
   currentResult.value = null;
-  revealing.value = true;
-  revealSteps.value = [];
-  const steps = ['正在确定馆', '正在确定楼层', '正在确定室', '正在确定架', '正在确定册', '正在确定页'];
-  for (const s of steps) {
-    if (id !== runId) return;
-    revealSteps.value.push(`${s}……`);
-    await sleep(240);
+  const fast = revealCount > 0;
+  revealCount++;
+  if (reducedMotion) {
+    currentResult.value = r;
+    resultAphorism.value = pickRandom(RESULT_APHORISMS);
+    return;
   }
-  revealSteps.value.push('找到了。');
-  await sleep(360);
+  revealing.value = true;
+  skipReveal = false;
+  revealSteps.value = [];
+  const steps = fast
+    ? ['正在确定坐标']
+    : ['正在确定馆', '正在确定楼层', '正在确定室', '正在确定架', '正在确定册', '正在确定页'];
+  for (const s of steps) {
+    if (id !== runId || skipReveal) break;
+    revealSteps.value.push(`${s}……`);
+    await sleep(fast ? 350 : 240);
+  }
+  if (id !== runId) return;
+  if (!skipReveal) {
+    revealSteps.value.push('找到了。');
+    await sleep(fast ? 250 : 360);
+  }
   if (id !== runId) return;
   revealing.value = false;
   currentResult.value = r;
   resultAphorism.value = pickRandom(RESULT_APHORISMS);
+  nextTickScroll();
+}
+
+function nextTickScroll() {
+  setTimeout(() => resultEl.value?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 50);
 }
 
 /** 分段定位：每段各算出一页真实坐标，逐段报告进度 */
@@ -264,14 +292,77 @@ function resultLink(r: SearchResult | ChunkEntry): string {
 }
 
 // ---------------------------------------------------------------------------
-// 首屏例句 / 辩护书 / 今日之页 / 馆员标记 / 我的藏书
+// 主题入口 / 合著接写 / 辩护书 / 今日之页 / 馆员标记 / 我的藏书
 // ---------------------------------------------------------------------------
 
-const examples = ['一句你从未说出口的话', '你明天将会说的第一句话', '宇宙终极问题的答案'];
+/** 每日轮换的主题人格测试 */
+const THEMES = [
+  {
+    name: '未来墓志铭',
+    hint: '如果宇宙只替你保留一句话，你会写什么？',
+    example: '这里躺着的人，终于读完了整座图书馆。',
+  },
+  {
+    name: '一句从未说出口的话',
+    hint: '有些话说不出，就先存在馆里。',
+    example: '我其实一直后悔那天的沉默。',
+  },
+  {
+    name: '写给十年后的自己',
+    hint: '图书馆比任何信箱都长久。',
+    example: '十年后的我，你过得比今天好吗？',
+  },
+];
+const themeIdx = ref(Math.floor(Date.now() / 86400000) % THEMES.length);
+const theme = computed(() => THEMES[themeIdx.value]);
+const textareaEl = ref<HTMLTextAreaElement>();
 
-function tryExample(s: string) {
-  query.value = s;
+function pickTheme(i: number) {
+  themeIdx.value = i;
+  query.value = THEMES[i].example;
   runSearch();
+}
+
+/** 合著接写：链接携带前半句，朋友打开后续写（响应式：站内跳转同样生效） */
+const draftBanner = ref(false);
+const copiedDraft = ref(false);
+
+watch(
+  () => route.query.draft,
+  (d) => {
+    if (typeof d !== 'string' || !d) return;
+    try {
+      const text = new TextDecoder().decode(b64uToBytes(d));
+      if (text) {
+        query.value = text;
+        draftBanner.value = true;
+      }
+    } catch {}
+  },
+  { immediate: true },
+);
+
+async function inviteCowrite() {
+  const text = query.value.normalize('NFC').trim();
+  if (!text) {
+    error.value = '先写下半句，再邀朋友接写。';
+    return;
+  }
+  error.value = '';
+  const b64 = bytesToB64u(new TextEncoder().encode(text));
+  const url = `${window.location.origin}${window.location.pathname}#/?draft=${b64}`;
+  try {
+    await navigator.clipboard.writeText(
+      `这句话我只写了一半，等你来续：${text}\n点开接着写 → ${url}`,
+    );
+  } catch {}
+  copiedDraft.value = true;
+  setTimeout(() => (copiedDraft.value = false), 2500);
+}
+
+function runSearch() {
+  draftBanner.value = false;
+  doSearch();
 }
 
 const heroQuote = pickRandom(HERO_QUOTES);
@@ -320,19 +411,32 @@ const showExamples = computed(
       <footer>—— {{ heroQuote.cite }}</footer>
     </blockquote>
     <p class="intro">你写下的任何一句话，都早已存在于某一页。</p>
+    <p class="theme-line">
+      今日开放：《{{ theme.name }}》 <span class="hint">{{ theme.hint }}</span>
+    </p>
   </section>
 
   <section class="search-box">
+    <p v-if="draftBanner" class="draft-banner">
+      友人已写下前半句，请你接写下去——图书馆会把你们合著的整句找给你们。
+    </p>
+    <label class="sr-only" for="query-input">写下你要定位的文字</label>
     <textarea
+      id="query-input"
+      ref="textareaEl"
       v-model="query"
       rows="3"
-      placeholder="写下一句话……"
+      :placeholder="theme.hint"
+      aria-label="写下你要定位的文字"
       @keydown.ctrl.enter.prevent="runSearch"
       @keydown.meta.enter.prevent="runSearch"
     ></textarea>
     <div class="search-actions">
       <button class="btn primary" @click="runSearch">定位这句话</button>
       <button class="btn weak" @click="roam">随意翻开一页</button>
+      <button class="btn weak" @click="inviteCowrite">
+        {{ copiedDraft ? '邀请链接已复制 ✓' : '邀朋友接写' }}
+      </button>
       <span class="hint submit-hint">Ctrl + Enter 定位</span>
     </div>
     <p v-if="error" class="error">
@@ -342,18 +446,24 @@ const showExamples = computed(
       </button>
     </p>
     <div v-if="showExamples" class="examples">
-      <span class="hint">不知从何找起？</span>
-      <button v-for="e in examples" :key="e" class="example-chip" @click="tryExample(e)">
-        {{ e }}
+      <span class="hint">换个主题：</span>
+      <button
+        v-for="(t, i) in THEMES"
+        :key="t.name"
+        class="example-chip"
+        :class="{ active: themeIdx === i }"
+        @click="pickTheme(i)"
+      >
+        {{ t.name }}
       </button>
     </div>
   </section>
 
-  <div v-if="revealing" class="reveal">
+  <div v-if="revealing" class="reveal" title="点击跳过" @click="skipReveal = true">
     <p v-for="(s, i) in revealSteps" :key="i" class="reveal-step">{{ s }}</p>
   </div>
 
-  <article v-if="currentResult" class="card result single-result">
+  <article v-if="currentResult" ref="resultEl" class="card result single-result" aria-live="polite">
     <p class="aphorism">{{ resultAphorism }}</p>
     <p class="snippet">
       <template v-for="(seg, i) in [segments(currentResult)]" :key="i"

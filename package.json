@@ -11,10 +11,12 @@
     "gen:alphabet": "node scripts/generate-alphabet.mjs"
   },
   "dependencies": {
+    "qrcode": "^1.5.4",
     "vue": "^3.5.13",
     "vue-router": "^4.5.0"
   },
   "devDependencies": {
+    "@types/qrcode": "^1.5.6",
     "@vitejs/plugin-vue": "^5.2.1",
     "@vue/test-utils": "^2.4.11",
     "chrome-remote-interface": "^0.34.0",

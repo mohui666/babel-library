@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch, watchEffect } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch, watchEffect } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { PAGE_LEN, SPACE_SIZE, permute, permuteInv, textOfAddress } from '../core/codec';
 import { addrToKey, keyToAddr, decompose, formatAddress } from '../core/address';
@@ -11,7 +11,7 @@ import {
 } from '../core/search';
 import { PAGE_APHORISMS, pickByAddress } from '../core/aphorisms';
 import { CLASSICS } from '../classics/books';
-import { renderTicket } from '../core/ticket';
+import { renderTicket, type TicketData, type TicketTheme } from '../core/ticket';
 import { loadShelf, toggleShelf, inShelf, type ShelfItem } from '../core/shelf';
 
 const route = useRoute();
@@ -234,26 +234,46 @@ const view = computed<{ rows: Seg[][]; truncated: boolean }>(() => {
 });
 
 // ---------------------------------------------------------------------------
-// 藏书票（分享图卡）与藏书夹
+// 收录证（分享图卡，三种装帧）与藏书夹
 // ---------------------------------------------------------------------------
 
 const showTicket = ref(false);
 const ticketUrl = ref('');
+const ticketTheme = ref<TicketTheme>('certificate');
+const ticketCloseBtn = ref<HTMLButtonElement>();
 
-function makeTicket() {
-  if (!state.value.ok) return;
+function buildTicketData(): TicketData | null {
+  if (!state.value.ok) return null;
   const ls = lines.value;
   const center = firstMarkLine.value;
   const from = Math.max(0, center - 4);
   const to = Math.min(ls.length, center + 5);
-  const canvas = renderTicket({
+  return {
+    query: query.value,
     lines: ls.slice(from, to),
     addressText: formatAddress(state.value.coords),
-    url: window.location.host,
-  });
-  ticketUrl.value = canvas.toDataURL('image/png');
-  showTicket.value = true;
+    url: window.location.href,
+    host: window.location.host,
+    theme: ticketTheme.value,
+  };
 }
+
+function makeTicket() {
+  const d = buildTicketData();
+  if (!d) return;
+  const canvas = renderTicket(d);
+  ticketUrl.value = canvas.toDataURL('image/png');
+}
+
+function openTicket() {
+  makeTicket();
+  showTicket.value = true;
+  nextTick(() => ticketCloseBtn.value?.focus());
+}
+
+watch(ticketTheme, () => {
+  if (showTicket.value) makeTicket();
+});
 
 const shelf = ref<ShelfItem[]>(loadShelf());
 const currentPath = computed(() => route.fullPath);
@@ -303,13 +323,51 @@ async function copyLink() {
   setTimeout(() => (copiedLink.value = false), 2000);
 }
 
-async function copyShare() {
-  if (!state.value.ok) return;
+function shareText(): string {
+  if (!state.value.ok) return '';
   const addr = formatAddress(state.value.coords);
-  const text = query.value
-    ? `我在巴别图书馆找到了「${query.value}」——它写在${addr}：${window.location.href}`
-    : `巴别图书馆的一页——${addr}：${window.location.href}`;
-  await copyText(text);
+  return query.value
+    ? `我在巴别图书馆找到了「${query.value}」——它不是刚刚生成的，从一开始，它就在${addr}等着我。你也去找一句：`
+    : `巴别图书馆的一页——${addr}。你也去找一句：`;
+}
+
+/** 主分享动作：优先系统分享面板（可带收录证图），不支持则复制文案+链接 */
+async function sharePage() {
+  if (!state.value.ok) return;
+  const text = shareText();
+  const url = window.location.href;
+  const nav = navigator as Navigator & {
+    share?: (d: ShareData) => Promise<void>;
+    canShare?: (d: ShareData) => boolean;
+  };
+  if (nav.share) {
+    try {
+      const d = buildTicketData();
+      if (d && nav.canShare) {
+        const blob = await new Promise<Blob | null>((r) =>
+          renderTicket(d).toBlob(r, 'image/png'),
+        );
+        if (blob) {
+          const file = new File([blob], '宇宙收录证.png', { type: 'image/png' });
+          if (nav.canShare({ files: [file] })) {
+            await nav.share({ files: [file], title: '巴别图书馆', text });
+            return;
+          }
+        }
+      }
+      await nav.share({ title: '巴别图书馆', text, url });
+      return;
+    } catch (e) {
+      if ((e as DOMException)?.name === 'AbortError') return; // 用户取消
+    }
+  }
+  await copyText(`${text}${url}`);
+  copiedShare.value = true;
+  setTimeout(() => (copiedShare.value = false), 2000);
+}
+
+async function copyShare() {
+  await copyText(`${shareText()}${window.location.href}`);
   copiedShare.value = true;
   setTimeout(() => (copiedShare.value = false), 2000);
 }
@@ -319,6 +377,10 @@ async function copyShare() {
 // ---------------------------------------------------------------------------
 
 function onKey(e: KeyboardEvent) {
+  if (e.key === 'Escape' && showTicket.value) {
+    showTicket.value = false;
+    return;
+  }
   const info = classicInfo.value;
   if (e.key === 'ArrowLeft') {
     if (info && info.ch > 0) gotoChapter(info.ch - 1);
@@ -385,22 +447,28 @@ const PAGE = PAGE_LEN;
         <RouterLink v-if="nextLink" class="btn small" :to="nextLink">下一页 →</RouterLink>
         <span v-else class="btn small disabled">下一页 →</span>
       </div>
-      <div class="page-nav">
-        <RouterLink v-if="bookLink" class="btn small" :to="bookLink">所属书籍</RouterLink>
-        <button v-if="hasMark" class="btn small" @click="focus = !focus">
-          {{ focus ? '显示全页' : '只看原句' }}
+      <div class="page-nav main-actions">
+        <button class="btn primary" @click="sharePage">
+          {{ copiedShare ? '已复制文案 ✓' : '分享这句话' }}
         </button>
-        <button class="btn small" @click="toggleSave">
+        <button class="btn" @click="openTicket">收录证</button>
+        <button class="btn" @click="toggleSave">
           {{ saved ? '移出藏书夹' : '收入藏书夹' }}
         </button>
-        <button class="btn small" @click="makeTicket">藏书票</button>
-        <button class="btn small" @click="copyLink">
-          {{ copiedLink ? '已复制 ✓' : '复制本页链接' }}
-        </button>
-        <button class="btn small" @click="copyShare">
-          {{ copiedShare ? '已复制 ✓' : '复制分享文案' }}
-        </button>
-        <RouterLink class="btn small" to="/">回到检索</RouterLink>
+        <details class="more-actions">
+          <summary class="btn small">更多</summary>
+          <div class="more-actions-body">
+            <RouterLink v-if="bookLink" class="btn small" :to="bookLink">所属书籍</RouterLink>
+            <button v-if="hasMark" class="btn small" @click="focus = !focus">
+              {{ focus ? '显示全页' : '只看原句' }}
+            </button>
+            <button class="btn small" @click="copyLink">
+              {{ copiedLink ? '已复制 ✓' : '复制本页链接' }}
+            </button>
+            <button class="btn small" @click="copyShare">复制分享文案</button>
+            <RouterLink class="btn small" to="/">回到检索</RouterLink>
+          </div>
+        </details>
       </div>
     </header>
 
@@ -429,12 +497,33 @@ const PAGE = PAGE_LEN;
       这一页共有 {{ PAGE }} 个字符。它从不存在于任何服务器上——你看到的每个字，都由它的地址推演而来。
     </p>
 
-    <div v-if="showTicket" class="ticket-modal" @click.self="showTicket = false">
+    <div
+      v-if="showTicket"
+      class="ticket-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-label="收录证"
+      @click.self="showTicket = false"
+    >
       <div class="ticket-box">
-        <img :src="ticketUrl" alt="藏书票" class="ticket-img" />
+        <div class="ticket-themes">
+          <button
+            v-for="t in [
+              ['certificate', '宇宙收录证'],
+              ['epitaph', '未来墓志铭'],
+              ['ticket', '原始藏书票'],
+            ]"
+            :key="t[0]"
+            :class="{ active: ticketTheme === t[0] }"
+            @click="ticketTheme = t[0] as TicketTheme"
+          >
+            {{ t[1] }}
+          </button>
+        </div>
+        <img :src="ticketUrl" alt="收录证图卡" class="ticket-img" />
         <div class="ticket-actions">
-          <a class="btn primary ticket-download" :href="ticketUrl" download="巴别图书馆藏书票.png">下载藏书票</a>
-          <button class="btn" @click="showTicket = false">收起</button>
+          <a class="btn primary ticket-download" :href="ticketUrl" download="巴别图书馆收录证.png">下载</a>
+          <button ref="ticketCloseBtn" class="btn" @click="showTicket = false">收起</button>
         </div>
       </div>
     </div>

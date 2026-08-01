@@ -6,7 +6,7 @@ import { resolve } from 'node:path';
 import CDP from 'chrome-remote-interface';
 import { textOfAddress } from '../src/core/codec';
 import { keyToAddr } from '../src/core/address';
-import { b64uToBytes } from '../src/core/base64';
+import { b64uToBytes, bytesToB64u } from '../src/core/base64';
 import {
   unpackRecipe,
   addressFromRecipeDelta,
@@ -267,6 +267,14 @@ try {
   await waitFor(`document.querySelector('.single-result')`, 15000);
   check('例句点击可直接定位', true);
 
+  // 7b. 「另一处」为快速揭示（首个步骤是合并的「正在确定坐标」）
+  await clickButton('在图书馆的另一处寻找同一句话');
+  await waitFor(`document.querySelector('.reveal-step')`, 4000);
+  const fastStep = await evalJs(`document.querySelector('.reveal-step')?.textContent ?? ''`);
+  check('另一处为快速揭示', fastStep.includes('坐标'), fastStep);
+  await waitFor(`document.querySelector('.single-result')`, 8000);
+  check('另一处仍能找到', true);
+
   // 8. 限定文本
   await goHome();
   await evalJs(`(() => {
@@ -384,14 +392,24 @@ try {
   await waitFor(`document.querySelector('.sheet')`);
   check('藏书条目可打开', await evalJs(`(document.querySelector('.sheet')?.textContent ?? '').includes('藏书夹测试句子')`));
 
-  // 16. 藏书票
-  await clickButton('藏书票');
+  // 16. 分享回退 + 收录证（三种装帧 + Esc 关闭）
+  await clickButton('分享这句话');
+  await sleep(500);
+  check('无原生面板时分享回退为复制', await evalJs(`[...document.querySelectorAll('button')].some(b => b.textContent.includes('已复制文案'))`));
+  await clickButton('收录证');
   await waitFor(`document.querySelector('.ticket-modal')`);
-  const ticketSrc = await evalJs(`document.querySelector('.ticket-img')?.src ?? ''`);
-  check('藏书票生成（PNG）', ticketSrc.startsWith('data:image/png'), ticketSrc.slice(0, 30));
+  const themeCount = await evalJs(`document.querySelectorAll('.ticket-themes button').length`);
+  check('收录证提供三种装帧', themeCount === 3, `${themeCount}`);
+  const src1 = await evalJs(`document.querySelector('.ticket-img')?.src ?? ''`);
+  await evalJs(`[...document.querySelectorAll('.ticket-themes button')].find(b => b.textContent.includes('未来墓志铭'))?.click(), true`);
+  await sleep(400);
+  const src2 = await evalJs(`document.querySelector('.ticket-img')?.src ?? ''`);
+  check('切换装帧重新生成', src1.startsWith('data:image/png') && src2.startsWith('data:image/png') && src1 !== src2);
   const ticketDl = await evalJs(`document.querySelector('.ticket-download')?.getAttribute('href') ?? ''`);
-  check('藏书票可下载', ticketDl.startsWith('data:image/png'));
-  await clickButton('收起');
+  check('收录证可下载', ticketDl.startsWith('data:image/png'));
+  await evalJs(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })), true`);
+  await sleep(300);
+  check('Esc 关闭收录证弹窗', await evalJs(`!document.querySelector('.ticket-modal')`));
 
   // 17. 真目录彩蛋
   await goHome();
@@ -412,6 +430,20 @@ try {
   const pilgrim = await evalJs(`document.querySelector('.pilgrimage')?.textContent ?? ''`);
   check('朝圣计数显示', pilgrim.includes('途经') && pilgrim.includes('朝圣'), pilgrim.trim().slice(0, 50));
 
+  // 19. 主题入口 + 合著接写
+  await goHome();
+  await evalJs(`[...document.querySelectorAll('.example-chip')].find(b => b.textContent.includes('未来墓志铭'))?.click(), true`);
+  const themeVal = await evalJs(`document.querySelector('textarea').value`);
+  check('主题入口填充示例', themeVal.length > 0, themeVal.slice(0, 20));
+  const draftB64 = bytesToB64u(new TextEncoder().encode('如果我们没有在这里相遇'));
+  await Page.navigate({ url: `${BASE}#/?draft=${draftB64}` });
+  await waitFor(`document.querySelector('.draft-banner')`);
+  const draftVal = await evalJs(`document.querySelector('textarea').value`);
+  check('接写链接预填前半句', draftVal.includes('如果我们没有在这里相遇'), draftVal.slice(0, 30));
+  await clickButton('定位这句话');
+  await waitFor(`document.querySelector('.single-result')`, 15000);
+  check('接写后可定位合著句', true);
+
   const errors = consoleMsgs.filter((m) => m.startsWith('[error]') || m.startsWith('[exception]') || m.startsWith('[warn]'));
   check('无 Vue 警告/异常', errors.length === 0, errors.slice(0, 5).join('\n'));
 } catch (e) {
@@ -420,8 +452,8 @@ try {
 } finally {
   if (client) await client.close();
   browser.kill();
-  await sleep(500);
-  rmSync(PROFILE, { recursive: true, force: true });
+  await sleep(800);
+  rmSync(PROFILE, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
 }
 
 console.log(failures.length === 0 ? '\n全部通过' : `\n${failures.length} 项失败`);
