@@ -370,9 +370,36 @@ mark {
     font-size: 16px;
   }
 
+  .site-header {
+    flex-wrap: wrap;
+    row-gap: 10px;
+  }
+
   .site-title {
-    font-size: 1.25rem;
-    letter-spacing: 0.25em;
+    font-size: 1.15rem;
+    letter-spacing: 0.2em;
+    white-space: nowrap;
+  }
+
+  .site-nav {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 14px;
+    width: 100%;
+  }
+
+  .site-nav a {
+    margin-left: 0;
+    white-space: nowrap;
+  }
+
+  .theme-toggle {
+    margin-left: 0;
+  }
+
+  .submit-hint {
+    display: none;
   }
 
   .sheet {
