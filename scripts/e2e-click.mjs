@@ -407,12 +407,15 @@ try {
   await waitFor(`document.querySelector('.sheet')`);
   check('藏书条目可打开', await evalJs(`(document.querySelector('.sheet')?.textContent ?? '').includes('藏书夹测试句子')`));
 
-  // 16. 分享回退 + 收录证（三种装帧 + Esc 关闭）
+  // 16. 自研分享面板（二维码 + 复制图文 + 预览链接 + 装帧 + Esc）
+  await evalJs(`navigator.clipboard.writeText = async (t) => { window.__copied = t; }, true`);
   await clickButton('分享这句话');
-  await sleep(500);
-  check('无原生面板时分享回退为复制', await evalJs(`[...document.querySelectorAll('button')].some(b => b.textContent.includes('已复制文案'))`));
-  await clickButton('收录证');
   await waitFor(`document.querySelector('.ticket-modal')`);
+  check('分享面板含二维码', await evalJs(`(document.querySelector('.share-qr img')?.src ?? '').startsWith('data:image')`));
+  await clickButton('复制图文');
+  await sleep(400);
+  const bodyCopied = await evalJs(`window.__copied ?? ''`);
+  check('复制图文含句子与链接', bodyCopied.includes('藏书夹测试句子') && bodyCopied.includes('/v1/'), bodyCopied.slice(0, 50));
   const themeCount = await evalJs(`document.querySelectorAll('.ticket-themes button').length`);
   check('收录证提供三种装帧', themeCount === 3, `${themeCount}`);
   const src1 = await evalJs(`document.querySelector('.ticket-img')?.src ?? ''`);
@@ -422,6 +425,9 @@ try {
   check('切换装帧重新生成', src1.startsWith('data:image/png') && src2.startsWith('data:image/png') && src1 !== src2);
   const ticketDl = await evalJs(`document.querySelector('.ticket-download')?.getAttribute('href') ?? ''`);
   check('收录证可下载', ticketDl.startsWith('data:image/png'));
+  await clickButton('复制预览链接');
+  await sleep(300);
+  check('面板可复制预览链接', (await evalJs(`window.__copied ?? ''`)).includes('/api/share/v1/s/'));
   await evalJs(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })), true`);
   await sleep(300);
   check('Esc 关闭收录证弹窗', await evalJs(`!document.querySelector('.ticket-modal')`));
@@ -485,9 +491,13 @@ try {
   check('正式书页保留接龙档案', archive.includes('宇宙接龙档案') && archive.includes('第 3 位馆员'), archive.slice(0, 50));
   await evalJs(`navigator.clipboard.writeText = async (t) => { window.__copied = t; }, true`);
   await clickButton('分享这句话');
+  await waitFor(`document.querySelector('.ticket-modal')`);
+  await clickButton('复制图文');
   await sleep(400);
   const shared = await evalJs(`window.__copied ?? ''`);
   check('接龙分享文案', shared.includes('合著了一页') && shared.includes('轮到你'), shared.slice(0, 60));
+  await evalJs(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })), true`);
+  await sleep(300);
 
   await Page.navigate({ url: `${BASE}#/?draft=${bytesToB64u(new TextEncoder().encode('旧格式一句话'))}` });
   await waitFor(`document.querySelector('.chain-seg')`);
@@ -504,15 +514,14 @@ try {
   await evalJs(`[...document.querySelectorAll('.single-result a')].find(a => a.textContent.includes('翻开完整书页'))?.click(), true`);
   await waitFor(`document.querySelector('.sheet')`);
   await evalJs(`navigator.clipboard.writeText = async (t) => { window.__copied = t; }, true`);
+  await clickButton('分享这句话');
+  await waitFor(`document.querySelector('.ticket-modal')`);
   await clickButton('复制预览链接');
   await sleep(300);
   check('动态预览链接生成', (await evalJs(`window.__copied ?? ''`)).includes('/api/share/v1/s/'), (await evalJs(`window.__copied ?? ''`)).slice(-40));
-
-  await clickButton('收录证');
-  await waitFor(`document.querySelector('.ticket-modal')`);
-  await clickButton('直接分享');
-  await sleep(500);
-  check('收录证直接分享回退复制', await evalJs(`(window.__copied ?? '').includes('预览链接测试句')`));
+  await clickButton('复制图文');
+  await sleep(300);
+  check('面板复制图文含句子', await evalJs(`(window.__copied ?? '').includes('预览链接测试句')`));
   await evalJs(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })), true`);
 
   // 接龙署名

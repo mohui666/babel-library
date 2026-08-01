@@ -536,6 +536,10 @@ function openResultTicket() {
           names: resultChain.value.map((s) => s.n).filter(Boolean) as string[],
         }
       : undefined,
+    shareBody: `「${lastQuery.value}」——早已写在巴别图书馆的某一页。\n它一直位于${r.addressText}。你的那一句在哪里？`,
+    previewUrl: r.shortPath?.startsWith('/v1/s/')
+      ? `${window.location.origin}/api/share${r.shortPath}`
+      : undefined,
   };
 }
 

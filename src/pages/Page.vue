@@ -12,7 +12,7 @@ import {
 } from '../core/search';
 import { PAGE_APHORISMS, pickByAddress } from '../core/aphorisms';
 import { CLASSICS } from '../classics/books';
-import { renderTicket, type TicketData } from '../core/ticket';
+import { type TicketData } from '../core/ticket';
 import TicketModal from '../components/TicketModal.vue';
 import { loadShelf, toggleShelf, inShelf, type ShelfItem } from '../core/shelf';
 import { recordHistory } from '../core/history';
@@ -308,6 +308,8 @@ function buildTicketData(): TicketData | null {
           names: chainSegs.value.map((s) => s.n).filter(Boolean) as string[],
         }
       : undefined,
+    shareBody: shareText(),
+    previewUrl: previewLink.value ?? undefined,
   };
 }
 
@@ -342,15 +344,6 @@ const previewLink = computed(() => {
   if (!c || c.kind !== 'recipe' || c.delta !== 0n) return null;
   return `${window.location.origin}/api/share/v1/s/${c.payload}`;
 });
-
-const copiedPreview = ref(false);
-
-async function copyPreview() {
-  if (!previewLink.value) return;
-  await copyText(previewLink.value);
-  copiedPreview.value = true;
-  setTimeout(() => (copiedPreview.value = false), 2000);
-}
 
 /** CTA 回首页：带来源标记并继承当前主题 */
 const ctaHome = computed(() => {
@@ -393,7 +386,6 @@ async function copyText(t: string) {
 }
 
 const copiedLink = ref(false);
-const copiedShare = ref(false);
 
 async function copyLink() {
   await copyText(window.location.href);
@@ -415,47 +407,6 @@ function shareText(): string {
   return query.value
     ? `我在巴别图书馆找到了「${query.value}」——它不是刚刚生成的，从一开始，它就在${addr}等着我。你也去找一句：`
     : `巴别图书馆的一页——${addr}。你也去找一句：`;
-}
-
-/** 主分享动作：优先系统分享面板（可带收录证图），不支持则复制文案+链接 */
-async function sharePage() {
-  if (!state.value.ok) return;
-  const url = withShareSrc(window.location.href);
-  const body = `${shareText()}\n${url}`;
-  const nav = navigator as Navigator & {
-    share?: (d: ShareData) => Promise<void>;
-    canShare?: (d: ShareData) => boolean;
-  };
-  if (nav.share) {
-    try {
-      const d = buildTicketData();
-      if (d && nav.canShare) {
-        const blob = await new Promise<Blob | null>((r) =>
-          renderTicket(d).toBlob(r, 'image/png'),
-        );
-        if (blob) {
-          const file = new File([blob], '宇宙收录证.png', { type: 'image/png' });
-          if (nav.canShare({ files: [file] })) {
-            await nav.share({ files: [file], title: '巴别图书馆', text: body });
-            return;
-          }
-        }
-      }
-      await nav.share({ title: '巴别图书馆', text: body });
-      return;
-    } catch (e) {
-      if ((e as DOMException)?.name === 'AbortError') return; // 用户取消
-    }
-  }
-  await copyText(body);
-  copiedShare.value = true;
-  setTimeout(() => (copiedShare.value = false), 2000);
-}
-
-async function copyShare() {
-  await copyText(`${shareText()}\n${withShareSrc(window.location.href)}`);
-  copiedShare.value = true;
-  setTimeout(() => (copiedShare.value = false), 2000);
 }
 
 // ---------------------------------------------------------------------------
@@ -532,10 +483,7 @@ const PAGE = PAGE_LEN;
         <span v-else class="btn small disabled">下一页 →</span>
       </div>
       <div class="page-nav main-actions">
-        <button class="btn primary" @click="sharePage">
-          {{ copiedShare ? '已复制文案 ✓' : '分享这句话' }}
-        </button>
-        <button class="btn" @click="openTicket">收录证</button>
+        <button class="btn primary" @click="openTicket">分享这句话</button>
         <button class="btn" @click="toggleSave">
           {{ saved ? '移出藏书夹' : '收入藏书夹' }}
         </button>
@@ -549,10 +497,6 @@ const PAGE = PAGE_LEN;
             <button class="btn small" @click="copyLink">
               {{ copiedLink ? '已复制 ✓' : '复制本页链接' }}
             </button>
-            <button v-if="previewLink" class="btn small" @click="copyPreview">
-              {{ copiedPreview ? '已复制 ✓' : '复制预览链接（经预览服务）' }}
-            </button>
-            <button class="btn small" @click="copyShare">复制分享文案</button>
             <RouterLink class="btn small" to="/">回到检索</RouterLink>
           </div>
         </details>

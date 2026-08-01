@@ -30,6 +30,10 @@ export interface TicketData {
     continueUrl: string;
     names?: string[];
   };
+  /** 分享文案（复制图文时使用） */
+  shareBody?: string;
+  /** 动态预览链接（经预览服务；可选） */
+  previewUrl?: string;
 }
 
 const SERIF = 'Georgia,"Songti SC","STSong","Noto Serif SC","SimSun",serif';

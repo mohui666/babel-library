@@ -1476,3 +1476,23 @@ body {
   box-shadow: 0 4px 16px rgba(43, 42, 37, 0.18);
   font-size: 0.9rem;
 }
+
+/* ---------- 分享面板二维码 ---------- */
+
+.share-qr {
+  text-align: center;
+  margin: 4px 0 14px;
+}
+
+.share-qr img {
+  width: 180px;
+  height: 180px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: #f4efe3;
+}
+
+.share-qr .hint {
+  margin: 6px 0 0;
+  font-size: 0.78rem;
+}
