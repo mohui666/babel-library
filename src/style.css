@@ -1389,3 +1389,13 @@ body {
 .index-page .index-item {
   margin-bottom: 34px;
 }
+
+/* ---------- 自然排版的书页 ---------- */
+
+.sheet-flow {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-size: 0.98rem;
+  line-height: 2.1;
+}

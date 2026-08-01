@@ -170,7 +170,7 @@ interface Seg {
   marked: boolean;
 }
 
-/** 把整页按 50 字一行切开，同时标注高亮区间 */
+/** 把整页按 50 字一行切开，同时标注高亮区间（图卡纹理用） */
 const lines = computed<Seg[][]>(() => {
   if (!state.value.ok) return [];
   const chars = [...state.value.text];
@@ -227,12 +227,46 @@ const firstMarkLine = computed(() => {
   return 0;
 });
 
-const view = computed<{ rows: Seg[][]; truncated: boolean }>(() => {
-  const ls = lines.value;
-  if (!hasMark.value || expanded.value) return { rows: ls, truncated: false };
-  const from = Math.max(0, firstMarkLine.value - 2);
-  const to = Math.min(ls.length, firstMarkLine.value + 3);
-  return { rows: ls.slice(from, to), truncated: true };
+/**
+ * 阅读视图：自然排版（按容器宽度折行，不再按 50 字硬切）。
+ * 折叠态只取原句前后约 250 字的窗口；漫游/展开态为整页。
+ */
+const view = computed<{ segs: Seg[]; truncated: boolean; head: boolean; tail: boolean }>(() => {
+  const empty = { segs: [] as Seg[], truncated: false, head: false, tail: false };
+  if (!state.value.ok) return empty;
+  const chars = [...state.value.text];
+  const range = markRange.value;
+
+  let from = 0;
+  let to = chars.length;
+  if (range !== null && !expanded.value) {
+    from = Math.max(0, range[0] - 250);
+    to = Math.min(chars.length, range[1] + 250);
+  }
+
+  const segs: Seg[] = [];
+  let cur = '';
+  let curM = false;
+  for (let g = from; g < to; g++) {
+    const m = range !== null && g >= range[0] && g < range[1];
+    if (g === from) {
+      curM = m;
+      cur = chars[g];
+    } else if (m === curM) {
+      cur += chars[g];
+    } else {
+      segs.push({ t: cur, marked: curM });
+      cur = chars[g];
+      curM = m;
+    }
+  }
+  if (cur) segs.push({ t: cur, marked: curM });
+  return {
+    segs,
+    truncated: range !== null && !expanded.value,
+    head: from > 0,
+    tail: to < chars.length,
+  };
 });
 
 // ---------------------------------------------------------------------------
@@ -494,16 +528,18 @@ const PAGE = PAGE_LEN;
     </header>
 
     <article class="card sheet" :class="{ 'focus-mode': focus && hasMark, 'true-catalogue': isTrueCatalogue }">
-      <p v-for="(line, i) in view.rows" :key="i" class="sheet-line">
-        <template v-for="(seg, j) in line" :key="j"
+      <p class="sheet-flow">
+        <template v-if="view.head">……</template>
+        <template v-for="(seg, j) in view.segs" :key="j"
           ><mark v-if="seg.marked">{{ seg.t }}</mark
           ><template v-else>{{ seg.t }}</template></template
         >
+        <template v-if="view.tail">……</template>
       </p>
       <div v-if="view.truncated" class="expand-row">
         <button class="btn small" @click="expanded = true">展开完整书页（共 {{ PAGE }} 字）</button>
       </div>
-      <div v-else-if="hasMark && lines.length > 5" class="expand-row">
+      <div v-else-if="hasMark" class="expand-row">
         <button class="btn small" @click="expanded = false; focus = true">收起</button>
       </div>
     </article>

@@ -148,7 +148,7 @@ try {
 
   async function snapshot(label) {
     const hash = await evalJs(`location.hash`);
-    const domLine = await evalJs(`document.querySelector('.sheet-line')?.textContent ?? '(无)'`);
+    const domLine = await evalJs(`[...(document.querySelector('.sheet-flow')?.textContent ?? '')].slice(0, 50).join('') || '(无)'`);
     const collapsed = await evalJs(`!!document.querySelector('.expand-row')`);
     let expect = '(无法解码)';
     let match = false;
@@ -188,14 +188,14 @@ try {
   await evalJs(`[...document.querySelectorAll('.single-result a')].find(a => a.textContent.includes('翻开完整书页'))?.click(), true`);
   await waitFor(`document.querySelector('.sheet')`);
   check('默认聚焦原句', await evalJs(`!!document.querySelector('.sheet.focus-mode')`));
-  const collapsedLines = await evalJs(`document.querySelectorAll('.sheet-line').length`);
-  check('默认只显示上下文（≤5 行）', collapsedLines > 0 && collapsedLines <= 5, `${collapsedLines} 行`);
+  const collapsedChars = await evalJs(`[...(document.querySelector('.sheet-flow')?.textContent ?? '')].length`);
+  check('默认只显示上下文（约五百字窗口）', collapsedChars > 0 && collapsedChars < 1200, `${collapsedChars} 字`);
   check('高亮在上下文中', await evalJs(`document.querySelectorAll('.sheet mark').length > 0`));
   check('接收者 CTA 存在', await evalJs(`(document.querySelector('.cta-find')?.textContent ?? '').includes('也给我的话找一个地址')`));
   await clickButton('展开完整书页');
   await sleep(300);
-  const fullLines = await evalJs(`document.querySelectorAll('.sheet-line').length`);
-  check('展开后为完整书页', fullLines === 80, `${fullLines} 行`);
+  const fullChars = await evalJs(`[...(document.querySelector('.sheet-flow')?.textContent ?? '')].length`);
+  check('展开后为完整书页', fullChars === 4000, `${fullChars} 字`);
 
   // 3. 翻页保持短链接且内容一致
   const s1 = await snapshot('检索结果页');
@@ -301,7 +301,7 @@ try {
   await evalJs(`[...document.querySelectorAll('.single-result a')].find(a => a.textContent.includes('翻开完整书页'))?.click(), true`);
   await waitFor(`document.querySelector('.sheet')`);
   const customOk = await evalJs(`(() => {
-    const text = [...document.querySelectorAll('.sheet-line')].map(e => e.textContent).join('');
+    const text = (document.querySelector('.sheet-flow')?.textContent ?? '').replaceAll('…', '');
     const allowed = new Set([...'床前明月光疑是地上霜']);
     return [...text].every(c => allowed.has(c));
   })()`);
