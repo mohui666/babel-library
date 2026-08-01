@@ -436,22 +436,32 @@ try {
   const pilgrim = await evalJs(`document.querySelector('.pilgrimage')?.textContent ?? ''`);
   check('朝圣计数显示', pilgrim.includes('途经') && pilgrim.includes('朝圣'), pilgrim.trim().slice(0, 50));
 
-  // 19. 主题入口 + 合著接写
+  // 19. 主题入口 + 无限接龙
   await goHome();
   await evalJs(`[...document.querySelectorAll('.example-chip')].find(b => b.textContent.includes('未来墓志铭'))?.click(), true`);
   const themeVal = await evalJs(`document.querySelector('textarea').value`);
   check('主题入口填充示例', themeVal.length > 0, themeVal.slice(0, 20));
-  const draftB64 = bytesToB64u(new TextEncoder().encode('如果我们没有在这里相遇'));
-  await Page.navigate({ url: `${BASE}#/?draft=${draftB64}` });
-  await waitFor(`document.querySelector('.cowrite-a')`);
-  const cowriteText = await evalJs(`document.querySelector('.cowrite-a')?.textContent ?? ''`);
-  const bEmpty = await evalJs(`document.querySelector('textarea').value === ''`);
-  check('前半句只读展示、续写框独立', cowriteText.includes('如果我们没有在这里相遇') && bEmpty, cowriteText.slice(0, 20));
-  await setTextarea('，也会在另一座图书馆找到彼此。');
-  await clickButton('定位这句话');
+
+  const chainUrl = (segs) =>
+    `${BASE}#/?chain=${bytesToB64u(new TextEncoder().encode(JSON.stringify(segs)))}`;
+  await Page.navigate({ url: chainUrl(['如果我们没有在这里相遇', '也会在另一座图书馆找到彼此']) });
+  await waitFor(`document.querySelectorAll('.chain-seg').length === 2`);
+  check('接龙链接展示已有段落', true);
+  await setTextarea('——那里也有无限个我们。');
+  await clickButton('接着传下去');
+  await sleep(500);
+  check('传下去后链接已复制', await evalJs(`[...document.querySelectorAll('button')].some(b => b.textContent.includes('链接已复制'))`));
+  check('自己这棒已入链', await evalJs(`document.querySelectorAll('.chain-seg').length === 3`));
+  await Page.navigate({ url: chainUrl(['如果我们没有在这里相遇', '也会在另一座图书馆找到彼此', '——那里也有无限个我们。']) });
+  await waitFor(`document.querySelectorAll('.chain-seg').length === 3`);
+  await clickButton('完成接龙并定位');
   await waitFor(`document.querySelector('.single-result')`, 15000);
-  const cowriteMark = await evalJs(`document.querySelector('.cowrite-mark')?.textContent ?? ''`);
-  check('结果标记两位馆员', cowriteMark.includes('第一位馆员') && cowriteMark.includes('第二位馆员'), cowriteMark.slice(0, 40));
+  const chainMark = await evalJs(`document.querySelector('.cowrite-mark')?.textContent ?? ''`);
+  check('完成接龙标记各段归属', chainMark.includes('第 1 位馆员') && chainMark.includes('第 3 位馆员'), chainMark.slice(0, 50));
+
+  await Page.navigate({ url: `${BASE}#/?draft=${bytesToB64u(new TextEncoder().encode('旧格式一句话'))}` });
+  await waitFor(`document.querySelector('.chain-seg')`);
+  check('旧 draft 链接兼容', await evalJs(`(document.querySelector('.chain-seg')?.textContent ?? '').includes('旧格式一句话')`));
 
   const errors = consoleMsgs.filter((m) => m.startsWith('[error]') || m.startsWith('[exception]') || m.startsWith('[warn]'));
   check('无 Vue 警告/异常', errors.length === 0, errors.slice(0, 5).join('\n'));

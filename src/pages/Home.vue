@@ -122,18 +122,20 @@ function clearOutputs() {
 
 function runSearch() {
   const id = ++runId;
-  resultCowrite.value = null;
+  resultChain.value = null;
   if (selectedPools.value.length === 0 && !customFillActive.value) {
     error.value = '请至少选择一种书写体系，或输入一段限定字符集。';
     badChars.value = [];
     clearOutputs();
     return;
   }
-  const cw = cowriteA.value ? { a: cowriteA.value, b: query.value } : null;
-  const prepared = (cowriteA.value + query.value)
-    .normalize('NFC')
-    .replace(/\r\n?/g, '\n')
-    .trim();
+  // 接龙：链上各段 + 当前输入（若有）拼成全句
+  const segs =
+    chain.value.length > 0
+      ? [...chain.value, ...(query.value.trim() ? [query.value] : [])]
+      : null;
+  const combined = segs ? segs.join('') : query.value;
+  const prepared = combined.normalize('NFC').replace(/\r\n?/g, '\n').trim();
   // 换行不收录于字符集，仅作分段边界，校验时排除
   const v = validateQuery(prepared.replace(/\n/g, ''));
   if (!v.ok) {
@@ -152,7 +154,7 @@ function runSearch() {
   }
   if (chunks.length === 1) {
     lastQuery.value = chunks[0];
-    resultCowrite.value = cw;
+    resultChain.value = segs;
     const f = fillArgs();
     const [r] = search(chunks[0], 1, f.poolIds, f.customText);
     reveal(r, id);
@@ -334,58 +336,132 @@ function pickTheme(i: number) {
   });
 }
 
-/** 合著接写：第一位馆员的文字只读展示，第二位在独立输入框续写 */
-const cowriteA = ref('');
-const resultCowrite = ref<{ a: string; b: string } | null>(null);
-const copiedDraft = ref(false);
-const inviteFallbackUrl = ref('');
+/** 无限接龙：#/?chain=<base64url(JSON 段落数组)>，每位馆员一段、归属保留 */
+const chain = ref<string[]>([]);
+const resultChain = ref<string[] | null>(null);
+const copiedChain = ref(false);
+const chainFallbackUrl = ref('');
+
+function encodeChain(segs: string[]): string {
+  return bytesToB64u(new TextEncoder().encode(JSON.stringify(segs)));
+}
+
+function decodeChain(b64: string): string[] | null {
+  try {
+    const arr = JSON.parse(new TextDecoder().decode(b64uToBytes(b64)));
+    if (
+      Array.isArray(arr) &&
+      arr.length > 0 &&
+      arr.every((s) => typeof s === 'string' && s.length > 0)
+    ) {
+      return arr;
+    }
+  } catch {}
+  return null;
+}
 
 watch(
-  () => route.query.draft,
-  (d) => {
-    if (typeof d !== 'string' || !d) return;
-    try {
-      const text = new TextDecoder().decode(b64uToBytes(d));
-      if (text) {
-        cowriteA.value = text;
-        query.value = '';
-        nextTick(() => textareaEl.value?.focus());
-      }
-    } catch {}
+  () => [route.query.chain, route.query.draft] as const,
+  ([c, d]) => {
+    let segs: string[] | null = null;
+    if (typeof c === 'string' && c) segs = decodeChain(c);
+    else if (typeof d === 'string' && d) {
+      // 旧格式 ?draft= 兼容：视为一棒
+      try {
+        const t = new TextDecoder().decode(b64uToBytes(d));
+        if (t) segs = [t];
+      } catch {}
+    }
+    if (segs) {
+      chain.value = segs;
+      query.value = '';
+      nextTick(() => textareaEl.value?.focus());
+    }
   },
   { immediate: true },
 );
 
-async function inviteCowrite() {
-  const text = query.value.normalize('NFC').trim();
-  if (!text) {
-    error.value = '先写下半句，再邀朋友接写。';
-    return;
+const chainTotalLen = computed(() => chain.value.reduce((s, x) => s + codePointLen(x), 0));
+
+/** 复制到剪贴板（含 execCommand 回退），返回是否成功 */
+async function copyTextShim(t: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(t);
+    return true;
+  } catch {}
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = t;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    ta.remove();
+    return true;
+  } catch {
+    return false;
   }
-  if (codePointLen(text) > 200) {
-    error.value = '前半句请控制在 200 字以内，邀请链接才不至于过长。';
-    return;
-  }
-  error.value = '';
-  const b64 = bytesToB64u(new TextEncoder().encode(text));
-  const url = `${window.location.origin}${window.location.pathname}#/?draft=${b64}`;
-  const body = `这句话我只写了一半，等你来续：${text}\n点开接着写 → ${url}`;
+}
+
+/** 分享接龙链接（优先系统面板，失败回退剪贴板，再失败亮出链接） */
+async function shareChain(segs: string[], body: string) {
+  const url = `${window.location.origin}${window.location.pathname}#/?chain=${encodeChain(segs)}`;
+  const full = `${body}\n${url}`;
   const nav = navigator as Navigator & { share?: (d: ShareData) => Promise<void> };
   if (nav.share) {
     try {
-      await nav.share({ title: '巴别图书馆 · 合著一页', text: body });
+      await nav.share({ title: '巴别图书馆 · 接龙', text: full });
       return;
     } catch (e) {
       if ((e as DOMException)?.name === 'AbortError') return;
     }
   }
-  try {
-    await navigator.clipboard.writeText(body);
-    copiedDraft.value = true;
-    setTimeout(() => (copiedDraft.value = false), 2500);
-  } catch {
-    inviteFallbackUrl.value = url; // 剪贴板不可用时亮出链接供手动复制
+  if (await copyTextShim(full)) {
+    copiedChain.value = true;
+    setTimeout(() => (copiedChain.value = false), 2500);
+  } else {
+    chainFallbackUrl.value = url;
   }
+}
+
+/** 发起接龙（第一棒） */
+async function inviteCowrite() {
+  const text = query.value.normalize('NFC').trim();
+  if (!text) {
+    error.value = '先写下一句话，再开龙。';
+    return;
+  }
+  if (codePointLen(text) > 200) {
+    error.value = '第一棒请控制在 200 字以内，邀请链接才不至于过长。';
+    return;
+  }
+  error.value = '';
+  await shareChain([text], `这句话我只写了开头，等你来续：${text}\n点开接着写 →`);
+}
+
+/** 接着传下去：把自己这段入链，生成下一棒链接 */
+async function passChain() {
+  const t = query.value.normalize('NFC').trim();
+  if (!t) {
+    error.value = '写下你的那一段，再传给下一位。';
+    return;
+  }
+  if (codePointLen(t) > 200) {
+    error.value = '每一棒请控制在 200 字以内。';
+    return;
+  }
+  error.value = '';
+  const segs = [...chain.value, t];
+  chain.value = segs;
+  query.value = '';
+  await shareChain(
+    segs,
+    `巴别图书馆 · 接龙第 ${segs.length} 棒——前面已有 ${segs.length - 1} 段，等你续下一段 →`,
+  );
+}
+
+function dropChain() {
+  chain.value = [];
+  resultChain.value = null;
 }
 
 const heroQuote = pickRandom(HERO_QUOTES);
@@ -440,10 +516,16 @@ const showExamples = computed(
   </section>
 
   <section class="search-box">
-    <div v-if="cowriteA" class="cowrite">
-      <p class="cowrite-label">第一位馆员写道：</p>
-      <blockquote class="cowrite-a">{{ cowriteA }}</blockquote>
-      <p class="cowrite-label">请你（第二位馆员）接写下去：</p>
+    <div v-if="chain.length" class="cowrite">
+      <p class="cowrite-label">
+        接龙第 {{ chain.length + 1 }} 棒 · 已有 {{ chain.length }} 段（共 {{ chainTotalLen }} 字）
+        <button class="chain-drop" @click="dropChain">放弃接龙</button>
+      </p>
+      <blockquote v-for="(s, i) in chain" :key="i" class="cowrite-a chain-seg">
+        <span class="cowrite-who">第 {{ i + 1 }} 位馆员</span>{{ s }}
+      </blockquote>
+      <p class="cowrite-label">请你（第 {{ chain.length + 1 }} 位馆员）接写：</p>
+      <p v-if="chainTotalLen > 1200" class="hint">链接已较长，建议早日完成接龙。</p>
     </div>
     <label class="sr-only" for="query-input">写下你要定位的文字</label>
     <textarea
@@ -457,18 +539,23 @@ const showExamples = computed(
       @keydown.meta.enter.prevent="runSearch"
     ></textarea>
     <div class="search-actions">
-      <button class="btn primary" @click="runSearch">定位这句话</button>
+      <button class="btn primary" @click="runSearch">
+        {{ chain.length ? '完成接龙并定位' : '定位这句话' }}
+      </button>
+      <button v-if="chain.length" class="btn" @click="passChain">
+        {{ copiedChain ? '链接已复制 ✓' : '接着传下去' }}
+      </button>
       <button class="btn weak" @click="roam">随意翻开一页</button>
-      <button v-if="query.trim() && !cowriteA" class="btn weak" @click="inviteCowrite">
-        {{ copiedDraft ? '邀请链接已复制 ✓' : '邀朋友接写' }}
+      <button v-if="query.trim() && !chain.length" class="btn weak" @click="inviteCowrite">
+        {{ copiedChain ? '邀请链接已复制 ✓' : '开龙，邀朋友接写' }}
       </button>
       <span class="hint submit-hint">Ctrl + Enter 定位</span>
     </div>
-    <p v-if="inviteFallbackUrl" class="invite-fallback">
-      剪贴板不可用，请手动复制邀请链接：
+    <p v-if="chainFallbackUrl" class="invite-fallback">
+      剪贴板不可用，请手动复制接龙链接：
       <input
         readonly
-        :value="inviteFallbackUrl"
+        :value="chainFallbackUrl"
         class="invite-url"
         @focus="($event.target as HTMLInputElement).select()"
       />
@@ -499,9 +586,11 @@ const showExamples = computed(
 
   <article v-if="currentResult" ref="resultEl" class="card result single-result" aria-live="polite">
     <p class="aphorism">{{ resultAphorism }}</p>
-    <p v-if="resultCowrite" class="cowrite-mark">
-      <span class="cowrite-who">第一位馆员：</span>{{ resultCowrite.a }}<br />
-      <span class="cowrite-who">第二位馆员：</span>{{ resultCowrite.b }}
+    <p v-if="resultChain" class="cowrite-mark">
+      <template v-for="(s, i) in resultChain.slice(0, 8)" :key="i">
+        <span class="cowrite-who">第 {{ i + 1 }} 位馆员：</span>{{ s }}<br />
+      </template>
+      <span v-if="resultChain.length > 8" class="hint">……共 {{ resultChain.length }} 段</span>
     </p>
     <p class="snippet">
       <template v-for="(seg, i) in [segments(currentResult)]" :key="i"
