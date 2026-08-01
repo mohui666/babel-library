@@ -496,6 +496,68 @@ try {
   await sleep(500);
   check('点击馆名回首页清除接龙状态', await evalJs(`document.querySelectorAll('.chain-seg').length === 0`));
 
+  // 20. 动态预览链接 / 收录证直接分享 / 接龙署名 / 留存
+  await goHome();
+  await setTextarea('预览链接测试句');
+  await clickButton('定位这句话');
+  await waitFor(`document.querySelector('.single-result')`, 15000);
+  await evalJs(`[...document.querySelectorAll('.single-result a')].find(a => a.textContent.includes('翻开完整书页'))?.click(), true`);
+  await waitFor(`document.querySelector('.sheet')`);
+  await evalJs(`navigator.clipboard.writeText = async (t) => { window.__copied = t; }, true`);
+  await clickButton('复制预览链接');
+  await sleep(300);
+  check('动态预览链接生成', (await evalJs(`window.__copied ?? ''`)).includes('/api/share/v1/s/'), (await evalJs(`window.__copied ?? ''`)).slice(-40));
+
+  await clickButton('收录证');
+  await waitFor(`document.querySelector('.ticket-modal')`);
+  await clickButton('直接分享');
+  await sleep(500);
+  check('收录证直接分享回退复制', await evalJs(`(window.__copied ?? '').includes('预览链接测试句')`));
+  await evalJs(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })), true`);
+
+  // 接龙署名
+  await Page.navigate({ url: chainUrl(['开头一句']) });
+  await waitFor(`document.querySelector('.chain-name')`);
+  await evalJs(`(() => {
+    const ni = document.querySelector('.chain-name');
+    ni.value = '馆员甲';
+    ni.dispatchEvent(new Event('input', { bubbles: true }));
+    return true;
+  })()`);
+  await setTextarea('，续写一句。');
+  await clickButton('接着传下去');
+  await sleep(500);
+  const named = await evalJs(`[...document.querySelectorAll('.chain-seg')].map(e => e.textContent).join('|')`);
+  check('接龙署名入链展示', named.includes('馆员甲'), named.slice(0, 60));
+
+  // 连续入馆（预置昨天+今天的访问记录）
+  await evalJs(`(() => {
+    const d = new Date(); d.setDate(d.getDate() - 1);
+    const k = (x) => x.getFullYear() + '-' + String(x.getMonth()+1).padStart(2,'0') + '-' + String(x.getDate()).padStart(2,'0');
+    localStorage.setItem('babel:visits', JSON.stringify({ days: [k(d), k(new Date())], total: 2 }));
+    return true;
+  })()`);
+  await goHome();
+  const streakText = await evalJs(`document.querySelector('.visit-line')?.textContent ?? ''`);
+  check('连续入馆天数显示', streakText.includes('连续 2 天'), streakText.trim());
+
+  // 最近翻过 + 导出/导入
+  await Page.navigate({ url: `${BASE}#/shelf` });
+  await waitFor(`document.querySelector('.shelf-item')`);
+  const historyLabel = await evalJs(`[...document.querySelectorAll('.shelf-label')].map(e => e.textContent).join('|')`);
+  check('最近翻过自动记录', historyLabel.includes('预览链接测试句'), historyLabel.slice(0, 60));
+  check('藏书导出按钮存在', await evalJs(`[...document.querySelectorAll('button')].some(b => b.textContent.includes('导出藏书'))`));
+  await evalJs(`(() => {
+    const dt = new DataTransfer();
+    dt.items.add(new File([JSON.stringify([{ path: '/v1/t/imported', label: '导入的书页', addressText: '第 1 馆', addedAt: 1 }])], 'shelf.json', { type: 'application/json' }));
+    const input = document.querySelector('input[type=file]');
+    input.files = dt.files;
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    return true;
+  })()`);
+  await sleep(500);
+  check('藏书导入合并', await evalJs(`[...document.querySelectorAll('.shelf-label')].some(e => e.textContent.includes('导入的书页'))`));
+
   const errors = consoleMsgs.filter((m) => m.startsWith('[error]') || m.startsWith('[exception]') || m.startsWith('[warn]'));
   check('无 Vue 警告/异常', errors.length === 0, errors.slice(0, 5).join('\n'));
 } catch (e) {

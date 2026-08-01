@@ -15,6 +15,7 @@ import { CLASSICS } from '../classics/books';
 import { renderTicket, type TicketData } from '../core/ticket';
 import TicketModal from '../components/TicketModal.vue';
 import { loadShelf, toggleShelf, inShelf, type ShelfItem } from '../core/shelf';
+import { recordHistory } from '../core/history';
 
 const route = useRoute();
 const router = useRouter();
@@ -160,7 +161,15 @@ function bumpWandered() {
 watch(
   () => (state.value.ok ? state.value.address : null),
   (addr) => {
-    if (addr !== null && !query.value) bumpWandered();
+    if (addr === null) return;
+    if (!query.value) bumpWandered();
+    // 最近翻过（自动记录）
+    const label = query.value || [...state.value.text].slice(0, 12).join('') + '…';
+    recordHistory({
+      path: route.fullPath.replace(/([?&])src=share(&|$)/, '$1').replace(/[?&]$/, ''),
+      label,
+      addressText: formatAddress(state.value.coords),
+    });
   },
   { immediate: true },
 );
@@ -293,7 +302,11 @@ function buildTicketData(): TicketData | null {
     host: window.location.host,
     theme: 'certificate',
     chain: chainSegs.value.length
-      ? { count: chainSegs.value.length, continueUrl: chainContinueUrl.value }
+      ? {
+          count: chainSegs.value.length,
+          continueUrl: chainContinueUrl.value,
+          names: chainSegs.value.map((s) => s.n).filter(Boolean) as string[],
+        }
       : undefined,
   };
 }
@@ -322,6 +335,22 @@ const isTrueCatalogue = computed(() => query.value === SPHERE);
 
 /** 接收者来源：分享链接带 src=share 时 CTA 更突出 */
 const fromShare = computed(() => route.query.src === 'share');
+
+/** 动态预览链接（经预览服务，仅配方页可用；默认分享仍为不过服务器的 hash 链接） */
+const previewLink = computed(() => {
+  const c = resolved.value?.ctx;
+  if (!c || c.kind !== 'recipe' || c.delta !== 0n) return null;
+  return `${window.location.origin}/api/share/v1/s/${c.payload}`;
+});
+
+const copiedPreview = ref(false);
+
+async function copyPreview() {
+  if (!previewLink.value) return;
+  await copyText(previewLink.value);
+  copiedPreview.value = true;
+  setTimeout(() => (copiedPreview.value = false), 2000);
+}
 
 /** CTA 回首页：带来源标记并继承当前主题 */
 const ctaHome = computed(() => {
@@ -520,6 +549,9 @@ const PAGE = PAGE_LEN;
             <button class="btn small" @click="copyLink">
               {{ copiedLink ? '已复制 ✓' : '复制本页链接' }}
             </button>
+            <button v-if="previewLink" class="btn small" @click="copyPreview">
+              {{ copiedPreview ? '已复制 ✓' : '复制预览链接（经预览服务）' }}
+            </button>
             <button class="btn small" @click="copyShare">复制分享文案</button>
             <RouterLink class="btn small" to="/">回到检索</RouterLink>
           </div>
@@ -551,7 +583,7 @@ const PAGE = PAGE_LEN;
         宇宙接龙档案 · 本页由 {{ chainSegs.length }} 位馆员共同写就
       </p>
       <p v-for="(s, i) in chainSegs" :key="i" class="chain-archive-seg">
-        <span class="cowrite-who">第 {{ i + 1 }} 位馆员</span>{{ s }}
+        <span class="cowrite-who">第 {{ i + 1 }} 位馆员{{ s.n ? ` · ${s.n}` : '' }}</span>{{ s.t }}
       </p>
     </div>
 

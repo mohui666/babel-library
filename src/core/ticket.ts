@@ -24,10 +24,11 @@ export interface TicketData {
   url: string;
   host: string;
   theme: TicketTheme;
-  /** 接龙作品：人数与续棒链接 */
+  /** 接龙作品：人数、续棒链接与署名（如有） */
   chain?: {
     count: number;
     continueUrl: string;
+    names?: string[];
   };
 }
 
@@ -257,6 +258,10 @@ function renderCertificate(d: TicketData, dark = false): HTMLCanvasElement {
     W / 2,
     140,
   );
+  if (d.chain?.names?.length) {
+    ctx.font = `24px ${SERIF}`;
+    ctx.fillText(ellipsizeMiddle(`署名：${d.chain.names.join('、')}`, 30), W / 2, 186);
+  }
 
   const big = d.query || [...(d.lines[0]?.map((s) => s.t).join('') ?? '')].slice(0, 30).join('');
   const endY = drawBigText(ctx, big, W / 2, 330, W - 220, 8, p);

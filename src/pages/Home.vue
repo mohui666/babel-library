@@ -15,8 +15,10 @@ import { b64uToBytes } from '../core/base64';
 import {
   encodeChain,
   decodeChain,
+  joinChain,
   CHAIN_MAX_SEGS,
   CHAIN_SEG_MAX_CHARS,
+  type ChainSegment,
 } from '../core/chain';
 import {
   loadPools,
@@ -25,6 +27,7 @@ import {
   CUSTOM_FILL_KEY,
 } from '../core/fill';
 import { HERO_QUOTES, RESULT_APHORISMS, pickRandom } from '../core/aphorisms';
+import { recordVisit } from '../core/visits';
 import { type TicketData, type TicketSeg } from '../core/ticket';
 import TicketModal from '../components/TicketModal.vue';
 
@@ -111,12 +114,17 @@ function runSearch() {
     clearOutputs();
     return;
   }
-  // 接龙：链上各段 + 当前输入（若有）拼成全句
+  // 接龙：链上各段 + 当前输入（若有，可署名）拼成全句
   const segs =
     chain.value.length > 0
-      ? [...chain.value, ...(query.value.trim() ? [query.value] : [])]
+      ? [
+          ...chain.value,
+          ...(query.value.trim()
+            ? [{ t: query.value, n: chainName.value.trim() || undefined }]
+            : []),
+        ]
       : null;
-  const combined = segs ? segs.join('') : query.value;
+  const combined = segs ? joinChain(segs) : query.value;
   const prepared = combined.normalize('NFC').replace(/\r\n?/g, '\n').trim();
   // 换行不收录于字符集，仅作分段边界，校验时排除
   const v = validateQuery(prepared.replace(/\n/g, ''));
@@ -286,10 +294,11 @@ function resultLink(r: SearchResult | ChunkEntry): string {
 // 无限接龙：#/?chain=<base64url(JSON 段落数组)>，每位馆员一段、归属保留
 // ---------------------------------------------------------------------------
 
-const chain = ref<string[]>([]);
-const resultChain = ref<string[] | null>(null);
+const chain = ref<ChainSegment[]>([]);
+const resultChain = ref<ChainSegment[] | null>(null);
 const copiedChain = ref(false);
 const chainFallbackUrl = ref('');
+const chainName = ref('');
 
 watch(
   () => [route.query.chain, route.query.draft] as const,
@@ -300,15 +309,14 @@ watch(
       // 旧格式 ?draft= 兼容：视为一棒
       try {
         const t = new TextDecoder().decode(b64uToBytes(d));
-        if (t) segs = [t];
+        if (t) segs = [{ t }];
       } catch {}
     }
     if (segs) {
       chain.value = segs;
       query.value = '';
       nextTick(() => textareaEl.value?.focus());
-    } else if (chain.value.length > 0) {
-      // URL 已无接龙参数（如点击馆名回首页）：清除接龙状态
+    } else if (chain.value.length > 0) {      // URL 已无接龙参数（如点击馆名回首页）：清除接龙状态
       chain.value = [];
       resultChain.value = null;
     }
@@ -316,7 +324,9 @@ watch(
   { immediate: true },
 );
 
-const chainTotalLen = computed(() => chain.value.reduce((s, x) => s + codePointLen(x), 0));
+const chainTotalLen = computed(() =>
+  chain.value.reduce((s, x) => s + codePointLen(x.t), 0),
+);
 
 /** 复制到剪贴板（含 execCommand 回退），返回是否成功 */
 async function copyTextShim(t: string): Promise<boolean> {
@@ -340,7 +350,7 @@ async function copyTextShim(t: string): Promise<boolean> {
 type ShareOutcome = 'shared' | 'copied' | 'cancelled';
 
 /** 分享接龙链接；返回结果供调用方决定是否提交这一棒 */
-async function shareChain(segs: string[], body: string): Promise<ShareOutcome> {
+async function shareChain(segs: ChainSegment[], body: string): Promise<ShareOutcome> {
   const url = `${window.location.origin}${window.location.pathname}#/?chain=${encodeChain(segs)}`;
   const full = `${body}\n${url}`;
   const nav = navigator as Navigator & { share?: (d: ShareData) => Promise<void> };
@@ -376,7 +386,10 @@ async function inviteCowrite() {
     return;
   }
   error.value = '';
-  await shareChain([text], `这句话我只写了开头，等你来续：${text}\n点开接着写 →`);
+  await shareChain(
+    [{ t: text, n: chainName.value.trim() || undefined }],
+    `这句话我只写了开头，等你来续：${text}\n点开接着写 →`,
+  );
 }
 
 /** 接着传下去：分享成功后才把这一棒入链；取消不吞字 */
@@ -395,7 +408,7 @@ async function passChain() {
     return;
   }
   error.value = '';
-  const segs = [...chain.value, t];
+  const segs = [...chain.value, { t, n: chainName.value.trim() || undefined }];
   const outcome = await shareChain(
     segs,
     `巴别图书馆 · 接龙第 ${segs.length} 棒——前面已有 ${segs.length - 1} 段，等你续下一段 →`,
@@ -520,6 +533,7 @@ function openResultTicket() {
       ? {
           count: resultChain.value.length,
           continueUrl: `${window.location.origin}${window.location.pathname}#/?chain=${encodeChain(resultChain.value)}`,
+          names: resultChain.value.map((s) => s.n).filter(Boolean) as string[],
         }
       : undefined,
   };
@@ -534,6 +548,7 @@ function openResultTicket() {
 const fromShare = computed(() => route.query.src === 'share');
 
 const heroQuote = pickRandom(HERO_QUOTES);
+const visitStats = recordVisit();
 const showExamples = computed(
   () => !currentResult.value && !revealing.value && chunkResults.value.length === 0 && !chunkProgress.value,
 );
@@ -548,6 +563,9 @@ const showExamples = computed(
     <p class="intro">写下一句你不想被遗忘的话——它早已存在于某一页。</p>
     <p class="theme-line">
       今日开放：《{{ theme.name }}》 <span class="hint">{{ theme.hint }}</span>
+    </p>
+    <p v-if="visitStats.total > 1" class="visit-line">
+      第 {{ visitStats.total }} 次入馆 · 连续 {{ visitStats.streak }} 天
     </p>
   </section>
 
@@ -564,9 +582,17 @@ const showExamples = computed(
         <button class="chain-drop" @click="dropChain">放弃接龙</button>
       </p>
       <blockquote v-for="(s, i) in chain" :key="i" class="cowrite-a chain-seg">
-        <span class="cowrite-who">第 {{ i + 1 }} 位馆员</span>{{ s }}
+        <span class="cowrite-who">第 {{ i + 1 }} 位馆员{{ s.n ? ` · ${s.n}` : '' }}</span>{{ s.t }}
       </blockquote>
       <p class="cowrite-label">请你（第 {{ chain.length + 1 }} 位馆员）接写：</p>
+      <input
+        v-model="chainName"
+        class="vname-input chain-name"
+        type="text"
+        maxlength="12"
+        placeholder="署名（可选）"
+        aria-label="署名（可选）"
+      />
       <p v-if="chainTotalLen > 1200" class="hint">链接已较长，建议早日完成接龙。</p>
     </div>
     <label class="sr-only" for="query-input">写下你要定位的文字</label>
@@ -644,7 +670,7 @@ const showExamples = computed(
     </div>
     <p v-if="resultChain" class="cowrite-mark">
       <template v-for="(s, i) in resultChain.slice(0, 8)" :key="i">
-        <span class="cowrite-who">第 {{ i + 1 }} 位馆员：</span>{{ s }}<br />
+        <span class="cowrite-who">第 {{ i + 1 }} 位馆员{{ s.n ? ` · ${s.n}` : '' }}：</span>{{ s.t }}<br />
       </template>
       <span v-if="resultChain.length > 8" class="hint">……共 {{ resultChain.length }} 段</span>
     </p>
