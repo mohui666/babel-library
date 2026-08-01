@@ -151,8 +151,7 @@ function runSearch() {
 }
 
 /** 坐标逐层揭晓，然后呈现唯一结果。
- *  首次完整仪式（真实坐标逐行）；后续快速；reduced-motion 即时；点击可跳过 */
-let revealCount = 0;
+ *  每次定位（含「另一处」）都是完整仪式；reduced-motion 即时；点击可跳过 */
 let skipReveal = false;
 const resultEl = ref<HTMLElement>();
 const reducedMotion =
@@ -162,8 +161,6 @@ const reducedMotion =
 async function reveal(r: SearchResult, id: number) {
   chunkResults.value = [];
   currentResult.value = null;
-  const fast = revealCount > 0;
-  revealCount++;
   if (reducedMotion) {
     currentResult.value = r;
     resultAphorism.value = pickRandom(RESULT_APHORISMS);
@@ -175,20 +172,15 @@ async function reveal(r: SearchResult, id: number) {
   revealSteps.value = [];
   // 真实坐标逐行出现：馆 → 层 → 室 → 架 → 册 → 页
   const coords = r.addressText.split(' · ');
-  if (fast) {
-    revealSteps.value = [...coords];
-    await sleep(450);
-  } else {
-    for (const s of coords) {
-      if (id !== runId || skipReveal) break;
-      revealSteps.value.push(s);
-      await sleep(260);
-    }
+  for (const s of coords) {
+    if (id !== runId || skipReveal) break;
+    revealSteps.value.push(s);
+    await sleep(260);
   }
   if (id !== runId) return;
   if (!skipReveal) {
     revealSteps.value.push('找到了。');
-    await sleep(fast ? 250 : 400);
+    await sleep(400);
   }
   if (id !== runId) return;
   revealing.value = false;

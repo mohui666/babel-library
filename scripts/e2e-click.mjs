@@ -280,11 +280,12 @@ try {
   await waitFor(`document.querySelector('.single-result')`, 15000);
   check('填充后可手动定位', true);
 
-  // 7b. 「另一处」为快速揭示（六行坐标一次性出现；完整模式则逐行显现）
+  // 7b. 「另一处」同样展示完整逐行揭示（坐标逐行出现，而非一次给齐）
   await clickButton('在另一处寻找同一句话');
-  await waitFor(`document.querySelectorAll('.reveal-step').length >= 6`, 2000);
-  check('另一处为快速揭示', true);
-  await waitFor(`document.querySelector('.single-result')`, 8000);
+  await sleep(400);
+  const earlySteps = await evalJs(`document.querySelectorAll('.reveal-step').length`);
+  check('另一处为完整逐行揭示', earlySteps >= 1 && earlySteps < 6, `${earlySteps} 步/400ms`);
+  await waitFor(`document.querySelector('.single-result')`, 10000);
   check('另一处仍能找到', true);
 
   // 8. 限定文本
