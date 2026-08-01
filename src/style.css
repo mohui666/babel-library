@@ -1303,3 +1303,89 @@ body {
     min-height: 44px;
   }
 }
+
+/* ---------- 结果卡（它早已写在这里）/ 回流横幅 / 揭示 ---------- */
+
+.found-card {
+  text-align: center;
+  padding: 34px 24px 24px;
+  animation: found-in 0.5s ease;
+}
+
+@keyframes found-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.found-line {
+  color: var(--accent);
+  letter-spacing: 0.25em;
+  font-size: 0.9rem;
+  margin: 0 0 14px;
+}
+
+.found-query {
+  font-size: 1.5rem;
+  font-weight: 700;
+  line-height: 1.6;
+  margin: 0 0 16px;
+  word-break: break-word;
+}
+
+.found-addr {
+  margin: 0 0 20px;
+}
+
+.found-card .result-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
+}
+
+.found-proof {
+  border-top: 1px dashed var(--line);
+  padding-top: 14px;
+  font-size: 0.82rem;
+  text-align: left;
+}
+
+.share-banner {
+  background: var(--accent-soft);
+  border-left: 3px solid var(--accent);
+  padding: 10px 14px;
+  border-radius: 0 3px 3px 0;
+  font-size: 0.95rem;
+  margin: 0 0 14px;
+}
+
+.reveal {
+  margin: 48px 0;
+  text-align: center;
+  cursor: pointer;
+}
+
+.reveal-step {
+  margin: 8px 0;
+  color: var(--ink-soft);
+  letter-spacing: 0.15em;
+  font-size: 1rem;
+  animation: reveal-in 0.25s ease;
+}
+
+.reveal-step:last-child {
+  color: var(--accent);
+  font-weight: 700;
+  letter-spacing: 0.3em;
+}
+
+.index-page .index-item {
+  margin-bottom: 34px;
+}

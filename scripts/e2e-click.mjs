@@ -173,12 +173,19 @@ try {
   await waitFor(`document.querySelector('.single-result')`, 15000);
   check('坐标揭示后呈现唯一结果', true);
   const resultHref = await evalJs(
-    `document.querySelector('.single-result a.btn.primary')?.getAttribute('href') ?? ''`,
+    `[...document.querySelectorAll('.single-result a')].find(a => a.textContent.includes('翻开完整书页'))?.getAttribute('href') ?? ''`,
   );
   check('结果为 /v1/s/ 短链接', resultHref.includes('#/v1/s/') && resultHref.length < 200, `长度 ${resultHref.length}`);
 
+  // 结果卡直接领取收录证（无需进书页）
+  await clickButton('领取宇宙收录证');
+  await waitFor(`document.querySelector('.ticket-modal')`);
+  check('结果卡直接领取收录证', await evalJs(`(document.querySelector('.ticket-img')?.src ?? '').startsWith('data:image/png')`));
+  await evalJs(`document.querySelector('.ticket-box button:last-child')?.click(), true`);
+  await sleep(200);
+
   // 2. 打开结果：默认聚焦原句 + 上下文折叠 + 展开整页
-  await evalJs(`document.querySelector('.single-result a.btn.primary').click(), true`);
+  await evalJs(`[...document.querySelectorAll('.single-result a')].find(a => a.textContent.includes('翻开完整书页'))?.click(), true`);
   await waitFor(`document.querySelector('.sheet')`);
   check('默认聚焦原句', await evalJs(`!!document.querySelector('.sheet.focus-mode')`));
   const collapsedLines = await evalJs(`document.querySelectorAll('.sheet-line').length`);
@@ -251,7 +258,7 @@ try {
   await setTextarea('我今天中午吃了火锅');
   await clickButton('定位这句话');
   await waitFor(`document.querySelector('.single-result')`, 15000);
-  await evalJs(`document.querySelector('.single-result a.btn.primary').click(), true`);
+  await evalJs(`[...document.querySelectorAll('.single-result a')].find(a => a.textContent.includes('翻开完整书页'))?.click(), true`);
   await waitFor(`document.querySelector('.sheet')`);
   const cjkRatio = await evalJs(`(() => {
     const text = document.querySelector('.sheet')?.textContent ?? '';
@@ -273,11 +280,10 @@ try {
   await waitFor(`document.querySelector('.single-result')`, 15000);
   check('填充后可手动定位', true);
 
-  // 7b. 「另一处」为快速揭示（首个步骤是合并的「正在确定坐标」）
-  await clickButton('在图书馆的另一处寻找同一句话');
-  await waitFor(`document.querySelector('.reveal-step')`, 4000);
-  const fastStep = await evalJs(`document.querySelector('.reveal-step')?.textContent ?? ''`);
-  check('另一处为快速揭示', fastStep.includes('坐标'), fastStep);
+  // 7b. 「另一处」为快速揭示（六行坐标一次性出现；完整模式则逐行显现）
+  await clickButton('在另一处寻找同一句话');
+  await waitFor(`document.querySelectorAll('.reveal-step').length >= 6`, 2000);
+  check('另一处为快速揭示', true);
   await waitFor(`document.querySelector('.single-result')`, 8000);
   check('另一处仍能找到', true);
 
@@ -292,7 +298,7 @@ try {
   await setTextarea('明月光');
   await clickButton('定位这句话');
   await waitFor(`document.querySelector('.single-result')`, 15000);
-  await evalJs(`document.querySelector('.single-result a.btn.primary').click(), true`);
+  await evalJs(`[...document.querySelectorAll('.single-result a')].find(a => a.textContent.includes('翻开完整书页'))?.click(), true`);
   await waitFor(`document.querySelector('.sheet')`);
   const customOk = await evalJs(`(() => {
     const text = [...document.querySelectorAll('.sheet-line')].map(e => e.textContent).join('');
@@ -314,7 +320,7 @@ try {
   await setTextarea('我今天中午吃了火锅');
   await clickButton('定位这句话');
   await waitFor(`document.querySelector('.single-result')`, 15000);
-  await evalJs(`document.querySelector('.single-result a.btn.primary').click(), true`);
+  await evalJs(`[...document.querySelectorAll('.single-result a')].find(a => a.textContent.includes('翻开完整书页'))?.click(), true`);
   await waitFor(`document.querySelector('.sheet')`);
   await clickLink('所属书籍');
   await waitFor(`document.querySelector('.page-cell')`);
@@ -325,8 +331,8 @@ try {
   const cellHash = await evalJs(`location.hash`);
   check('页格为短链接', cellHash.length < 200, `长度 ${cellHash.length}`);
 
-  // 11. 反向定位（馆员索引）→ /v1/t/ 文字链接
-  await goHome();
+  // 11. 反向定位（馆员索引页）→ /v1/t/ 文字链接
+  await Page.navigate({ url: `${BASE}#/index` });
   await waitFor(`document.querySelector('.rev-input')`);
   await evalJs(`(() => {
     const ta = document.querySelector('.rev-input');
@@ -342,8 +348,8 @@ try {
   await waitFor(`document.querySelector('.sheet')`);
   check('文字页以原文开头', await evalJs(`(document.querySelector('.sheet')?.textContent ?? '').startsWith('第一行文字第二行文字第三行文字')`));
 
-  // 12. 名著：连读 + 馆中此页（短路由）+ 章际导航
-  await goHome();
+  // 12. 名著（馆员索引页）：连读 + 馆中此页（短路由）+ 章际导航
+  await Page.navigate({ url: `${BASE}#/index` });
   await waitFor(`document.querySelector('.classic-card')`);
   await evalJs(`[...document.querySelectorAll('.classic-card')].find(a => a.textContent.includes('道德经')).click(), true`);
   await waitFor(`document.querySelector('.reader-chapter')`);
@@ -358,8 +364,9 @@ try {
   await sleep(600);
   check('章际导航到第二章', await evalJs(`(document.querySelector('.sheet')?.textContent ?? '').includes('天下皆知美之為美')`));
 
-  // 13. 辩护书（馆员索引）
-  await goHome();
+  // 13. 辩护书（馆员索引页）
+  await Page.navigate({ url: `${BASE}#/index` });
+  await waitFor(`document.querySelector('.vname-input')`);
   await evalJs(`(() => {
     const vi = document.querySelector('.vname-input');
     vi.value = '张三';
@@ -372,8 +379,9 @@ try {
   await waitFor(`document.querySelector('.sheet')`);
   check('辩护书页包含辩护句', await evalJs(`(document.querySelector('.sheet')?.textContent ?? '').includes('张三的一生，已经得到辩护。')`));
 
-  // 14. 今日之页：同日同一页
-  await goHome();
+  // 14. 今日之页（馆员索引页）：同日同一页
+  await Page.navigate({ url: `${BASE}#/index` });
+  await waitFor(`document.querySelector('.index-item')`);
   const dailyHref1 = await evalJs(`[...document.querySelectorAll('a')].find(a => a.textContent.includes('翻开今日之页'))?.getAttribute('href') ?? ''`);
   check('今日之页为 /v1/s/ 链接', dailyHref1.includes('#/v1/s/'), `href = ${dailyHref1.slice(0, 90)}`);
   await evalJs(`[...document.querySelectorAll('a')].find(a => a.textContent.includes('翻开今日之页')).click(), true`);
@@ -381,19 +389,19 @@ try {
   const dailyHash = await evalJs(`location.hash`);
   check('今日之页可打开', dailyHash.includes(dailyHref1.replace(/^#/, '')));
 
-  // 15. 藏书夹
+  // 15. 藏书夹（独立 /shelf 页）
   await goHome();
   await setTextarea('藏书夹测试句子');
   await clickButton('定位这句话');
   await waitFor(`document.querySelector('.single-result')`, 15000);
-  await evalJs(`document.querySelector('.single-result a.btn.primary').click(), true`);
+  await evalJs(`[...document.querySelectorAll('.single-result a')].find(a => a.textContent.includes('翻开完整书页'))?.click(), true`);
   await waitFor(`document.querySelector('.sheet')`);
   await clickButton('收入藏书夹');
   await sleep(300);
   check('收藏后按钮变化', await evalJs(`[...document.querySelectorAll('button')].some(b => b.textContent.includes('移出藏书夹'))`));
-  await clickLink('回到检索');
+  await Page.navigate({ url: `${BASE}#/shelf` });
   await waitFor(`document.querySelector('.shelf-item')`);
-  check('首页出现藏书条目', true);
+  check('藏书页出现条目', true);
   await evalJs(`document.querySelector('.shelf-item a').click(), true`);
   await waitFor(`document.querySelector('.sheet')`);
   check('藏书条目可打开', await evalJs(`(document.querySelector('.sheet')?.textContent ?? '').includes('藏书夹测试句子')`));
@@ -422,7 +430,7 @@ try {
   await setTextarea('图书馆是一个球体，它精确的中心是任何一个六边形，它的圆周是远不可及的。');
   await clickButton('定位这句话');
   await waitFor(`document.querySelector('.single-result')`, 15000);
-  await evalJs(`document.querySelector('.single-result a.btn.primary').click(), true`);
+  await evalJs(`[...document.querySelectorAll('.single-result a')].find(a => a.textContent.includes('翻开完整书页'))?.click(), true`);
   await waitFor(`document.querySelector('.sheet')`);
   const tcText = await evalJs(`document.querySelector('.true-catalogue-addr')?.textContent ?? ''`);
   check('真目录彩蛋：编号异常', tcText.includes('真目录'), tcText);
@@ -470,7 +478,7 @@ try {
   check('完成接龙标记各段归属', chainMark.includes('第 1 位馆员') && chainMark.includes('第 3 位馆员'), chainMark.slice(0, 50));
 
   // 接龙身份穿透到正式书页与分享文案
-  await evalJs(`document.querySelector('.single-result a.btn.primary').click(), true`);
+  await evalJs(`[...document.querySelectorAll('.single-result a')].find(a => a.textContent.includes('翻开完整书页'))?.click(), true`);
   await waitFor(`document.querySelector('.sheet')`);
   const archive = await evalJs(`document.querySelector('.chain-archive')?.textContent ?? ''`);
   check('正式书页保留接龙档案', archive.includes('宇宙接龙档案') && archive.includes('第 3 位馆员'), archive.slice(0, 50));

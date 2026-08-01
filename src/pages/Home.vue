@@ -3,7 +3,6 @@ import { computed, nextTick, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import {
   validateQuery,
-  textPagePath,
   search,
   randomPage,
   splitIntoChunks,
@@ -12,19 +11,22 @@ import {
   type SearchResult,
 } from '../core/search';
 import { POOLS } from '../core/pools';
-import { CLASSICS } from '../classics/books';
-import { PAGE_LEN } from '../core/codec';
-import { coordsOfAddress, formatAddress } from '../core/address';
-import { bytesToB64u, b64uToBytes } from '../core/base64';
+import { b64uToBytes } from '../core/base64';
 import {
   encodeChain,
   decodeChain,
   CHAIN_MAX_SEGS,
   CHAIN_SEG_MAX_CHARS,
 } from '../core/chain';
+import {
+  loadPools,
+  loadCustomFill,
+  POOLS_STORAGE_KEY,
+  CUSTOM_FILL_KEY,
+} from '../core/fill';
 import { HERO_QUOTES, RESULT_APHORISMS, pickRandom } from '../core/aphorisms';
-import { dailyPath } from '../core/daily';
-import { loadShelf, removeFromShelf, type ShelfItem } from '../core/shelf';
+import { type TicketData, type TicketSeg } from '../core/ticket';
+import TicketModal from '../components/TicketModal.vue';
 
 const route = useRoute();
 const router = useRouter();
@@ -42,27 +44,8 @@ const revealSteps = ref<string[]>([]);
 const lastQuery = ref('');
 const resultAphorism = ref('');
 
-/** 乱码填充的语言池（默认全选 = 全字符集均匀；选择持久化到本地） */
+/** 书写体系语言池（默认全选 = 全字符集均匀；选择持久化到本地） */
 const pools = POOLS;
-const POOLS_STORAGE_KEY = 'babel:pools';
-
-function loadPools(): string[] {
-  try {
-    const raw = localStorage.getItem(POOLS_STORAGE_KEY);
-    if (raw) {
-      const arr = JSON.parse(raw);
-      if (
-        Array.isArray(arr) &&
-        arr.length > 0 &&
-        arr.every((id) => POOLS.some((p) => p.id === id))
-      ) {
-        return arr;
-      }
-    }
-  } catch {}
-  return POOLS.map((p) => p.id);
-}
-
 const selectedPools = ref<string[]>(loadPools());
 watch(
   selectedPools,
@@ -74,17 +57,8 @@ watch(
   { deep: true },
 );
 
-/** 限定文本：乱码只使用其中出现过的字符（优先于语言池） */
-const CUSTOM_FILL_KEY = 'babel:custom-fill';
-const customFill = ref<string>(
-  (() => {
-    try {
-      return localStorage.getItem(CUSTOM_FILL_KEY) ?? '';
-    } catch {
-      return '';
-    }
-  })(),
-);
+/** 限定字符集：乱码只使用其中出现过的字符（优先于语言池） */
+const customFill = ref<string>(loadCustomFill());
 watch(customFill, (v) => {
   try {
     localStorage.setItem(CUSTOM_FILL_KEY, v);
@@ -177,7 +151,7 @@ function runSearch() {
 }
 
 /** 坐标逐层揭晓，然后呈现唯一结果。
- *  首次完整仪式；后续快速（约 0.6s）；reduced-motion 即时；点击可跳过 */
+ *  首次完整仪式（真实坐标逐行）；后续快速；reduced-motion 即时；点击可跳过 */
 let revealCount = 0;
 let skipReveal = false;
 const resultEl = ref<HTMLElement>();
@@ -193,24 +167,28 @@ async function reveal(r: SearchResult, id: number) {
   if (reducedMotion) {
     currentResult.value = r;
     resultAphorism.value = pickRandom(RESULT_APHORISMS);
-    nextTickScroll('auto'); // 关动画但仍把结果带入视野
+    nextTickScroll('auto');
     return;
   }
   revealing.value = true;
   skipReveal = false;
   revealSteps.value = [];
-  const steps = fast
-    ? ['正在确定坐标']
-    : ['正在确定馆', '正在确定楼层', '正在确定室', '正在确定架', '正在确定册', '正在确定页'];
-  for (const s of steps) {
-    if (id !== runId || skipReveal) break;
-    revealSteps.value.push(`${s}……`);
-    await sleep(fast ? 350 : 240);
+  // 真实坐标逐行出现：馆 → 层 → 室 → 架 → 册 → 页
+  const coords = r.addressText.split(' · ');
+  if (fast) {
+    revealSteps.value = [...coords];
+    await sleep(450);
+  } else {
+    for (const s of coords) {
+      if (id !== runId || skipReveal) break;
+      revealSteps.value.push(s);
+      await sleep(260);
+    }
   }
   if (id !== runId) return;
   if (!skipReveal) {
     revealSteps.value.push('找到了。');
-    await sleep(fast ? 250 : 360);
+    await sleep(fast ? 250 : 400);
   }
   if (id !== runId) return;
   revealing.value = false;
@@ -313,48 +291,9 @@ function resultLink(r: SearchResult | ChunkEntry): string {
 }
 
 // ---------------------------------------------------------------------------
-// 主题入口 / 合著接写 / 辩护书 / 今日之页 / 馆员标记 / 我的藏书
+// 无限接龙：#/?chain=<base64url(JSON 段落数组)>，每位馆员一段、归属保留
 // ---------------------------------------------------------------------------
 
-/** 每日轮换的主题人格测试 */
-const THEMES = [
-  {
-    name: '未来墓志铭',
-    hint: '如果宇宙只替你保留一句话，你会写什么？',
-    example: '这里躺着的人，终于读完了整座图书馆。',
-  },
-  {
-    name: '一句从未说出口的话',
-    hint: '有些话说不出，就先存在馆里。',
-    example: '我其实一直后悔那天的沉默。',
-  },
-  {
-    name: '写给十年后的自己',
-    hint: '图书馆比任何信箱都长久。',
-    example: '十年后的我，你过得比今天好吗？',
-  },
-];
-/** 每日轮换的主题（本地日期，与今日之页同一零点） */
-const themeIdx = ref(
-  (() => {
-    const n = new Date();
-    return (n.getFullYear() * 10000 + (n.getMonth() + 1) * 100 + n.getDate()) % THEMES.length;
-  })(),
-);
-const theme = computed(() => THEMES[themeIdx.value]);
-const textareaEl = ref<HTMLTextAreaElement>();
-
-function pickTheme(i: number) {
-  themeIdx.value = i;
-  query.value = THEMES[i].example;
-  // 只填入示例并全选，由用户改完后自己定位——避免满屏雷同的"系统分享"
-  nextTick(() => {
-    textareaEl.value?.focus();
-    textareaEl.value?.select();
-  });
-}
-
-/** 无限接龙：#/?chain=<base64url(JSON 段落数组)>，每位馆员一段、归属保留 */
 const chain = ref<string[]>([]);
 const resultChain = ref<string[] | null>(null);
 const copiedChain = ref(false);
@@ -487,73 +426,122 @@ function dropChain() {
   resultChain.value = null;
 }
 
-const heroQuote = pickRandom(HERO_QUOTES);
+// ---------------------------------------------------------------------------
+// 主题入口（按本地日期轮换；?theme= 可继承主题）
+// ---------------------------------------------------------------------------
 
-const vname = ref('');
-const vindication = ref<SearchResult | null>(null);
+const THEMES = [
+  {
+    name: '未来墓志铭',
+    hint: '如果宇宙只替你保留一句话，你会写什么？',
+    example: '这里躺着的人，终于读完了整座图书馆。',
+  },
+  {
+    name: '一句从未说出口的话',
+    hint: '有些话说不出，就先存在馆里。',
+    example: '我其实一直后悔那天的沉默。',
+  },
+  {
+    name: '写给十年后的自己',
+    hint: '图书馆比任何信箱都长久。',
+    example: '十年后的我，你过得比今天好吗？',
+  },
+];
 
-function findVindication() {
-  if (selectedPools.value.length === 0 && !customFillActive.value) {
-    error.value = '请至少选择一种书写体系，或输入一段限定字符集。';
-    return;
-  }
-  error.value = '';
-  const raw = vname.value.trim();
-  // 短输入视为名字（馆方模板）；长输入视为你自己写下的辩词，直接定位
-  const q = raw.length === 0 ? '无名者的一生，已经得到辩护。'
-    : codePointLen(raw) <= 10 ? `${raw}的一生，已经得到辩护。`
-    : raw;
-  const f = fillArgs();
-  const [r] = search(q, 1, f.poolIds, f.customText);
-  vindication.value = r;
-}
-
-const dailyLink = dailyPath();
-
-/** 反向定位（馆员索引）：已有一页文字 → 直接算坐标 */
-const revRaw = ref('');
-const revErr = ref('');
-const revBad = ref<string[]>([]);
-const revLink = ref('');
-const revAddr = ref('');
-
-function revLocate() {
-  revErr.value = '';
-  revBad.value = [];
-  revLink.value = '';
-  const prepared = revRaw.value.normalize('NFC').replace(/\r\n?/g, '\n');
-  const v = validateQuery(prepared.replace(/\n/g, ''));
-  if (!v.ok) {
-    revErr.value = v.message;
-    revBad.value = v.badChars;
-    return;
-  }
-  if (codePointLen(v.query) > PAGE_LEN) {
-    revErr.value = `反向定位只处理一整页以内的文字（${PAGE_LEN} 字），你的文字更长——请用上方输入框分段定位。`;
-    return;
-  }
-  const { path, address } = textPagePath(v.query);
-  revLink.value = path;
-  revAddr.value = formatAddress(coordsOfAddress(address));
-}
-
-function revStrip() {
-  const set = new Set(revBad.value);
-  revRaw.value = [...revRaw.value].filter((ch) => !set.has(ch)).join('');
-  revLocate();
-}
-
-/** 馆员已经标记的几页（首页只示三） */
-const markedPages = CLASSICS.filter((b) =>
-  ['daodejing', 'sunzi', 'tang-shi'].includes(b.id),
+const themeIdx = ref(
+  (() => {
+    const n = new Date();
+    return (n.getFullYear() * 10000 + (n.getMonth() + 1) * 100 + n.getDate()) % THEMES.length;
+  })(),
 );
 
-const shelfItems = ref<ShelfItem[]>(loadShelf());
+// 分享回流的主题继承：?theme=N 预选主题
+if (typeof route.query.theme === 'string') {
+  const i = Number(route.query.theme);
+  if (Number.isInteger(i) && i >= 0 && i < THEMES.length) themeIdx.value = i;
+}
+watch(themeIdx, (v) => {
+  try {
+    localStorage.setItem('babel:theme-idx', String(v));
+  } catch {}
+});
 
-function removeShelfItem(path: string) {
-  shelfItems.value = removeFromShelf(shelfItems.value, path);
+const theme = computed(() => THEMES[themeIdx.value]);
+const textareaEl = ref<HTMLTextAreaElement>();
+
+function pickTheme(i: number) {
+  themeIdx.value = i;
+  query.value = THEMES[i].example;
+  // 只填入示例并全选，由用户改完后自己定位——避免满屏雷同的"系统分享"
+  nextTick(() => {
+    textareaEl.value?.focus();
+    textareaEl.value?.select();
+  });
 }
 
+// ---------------------------------------------------------------------------
+// 收录证前置：结果卡直接领取
+// ---------------------------------------------------------------------------
+
+const modalData = ref<TicketData | null>(null);
+
+/** 把检索片段按 50 字一行切成带高亮标记的行（用作图卡纹理） */
+function snippetLines(r: SearchResult): TicketSeg[][] {
+  const chars = [...r.snippet];
+  const out: TicketSeg[][] = [];
+  for (let l = 0; l * 50 < chars.length; l++) {
+    const segs: TicketSeg[] = [];
+    let cur = '';
+    let curM = false;
+    for (let i = 0; i < 50; i++) {
+      const g = l * 50 + i;
+      if (g >= chars.length) break;
+      const m = g >= r.markStart && g < r.markStart + r.markLen;
+      if (i === 0) {
+        curM = m;
+        cur = chars[g];
+      } else if (m === curM) {
+        cur += chars[g];
+      } else {
+        segs.push({ t: cur, marked: curM });
+        cur = chars[g];
+        curM = m;
+      }
+    }
+    if (cur) segs.push({ t: cur, marked: curM });
+    out.push(segs);
+  }
+  return out;
+}
+
+function openResultTicket() {
+  const r = currentResult.value;
+  if (!r) return;
+  modalData.value = {
+    query: lastQuery.value,
+    lines: snippetLines(r).slice(0, 9),
+    addressText: r.addressText,
+    url: `${window.location.origin}${window.location.pathname}#${resultLink(r)}`,
+    host: window.location.host,
+    theme: 'certificate',
+    chain: resultChain.value?.length
+      ? {
+          count: resultChain.value.length,
+          continueUrl: `${window.location.origin}${window.location.pathname}#/?chain=${encodeChain(resultChain.value)}`,
+        }
+      : undefined,
+  };
+}
+
+/** 供「分享这句话」复用的图卡数据已内联于 openResultTicket */
+
+// ---------------------------------------------------------------------------
+// 接收者回流横幅
+// ---------------------------------------------------------------------------
+
+const fromShare = computed(() => route.query.src === 'share');
+
+const heroQuote = pickRandom(HERO_QUOTES);
 const showExamples = computed(
   () => !currentResult.value && !revealing.value && chunkResults.value.length === 0 && !chunkProgress.value,
 );
@@ -565,13 +553,17 @@ const showExamples = computed(
       <p>「{{ heroQuote.text }}」</p>
       <footer>—— {{ heroQuote.cite }}</footer>
     </blockquote>
-    <p class="intro">你写下的任何一句话，都早已存在于某一页。</p>
+    <p class="intro">写下一句你不想被遗忘的话——它早已存在于某一页。</p>
     <p class="theme-line">
       今日开放：《{{ theme.name }}》 <span class="hint">{{ theme.hint }}</span>
     </p>
   </section>
 
   <p v-else class="chain-landing">朋友把第 {{ chain.length + 1 }} 棒交给你。</p>
+
+  <p v-if="fromShare && !chain.length" class="share-banner">
+    朋友留下了这句话。现在，轮到你了。
+  </p>
 
   <section class="search-box">
     <div v-if="chain.length" class="cowrite">
@@ -591,7 +583,7 @@ const showExamples = computed(
       ref="textareaEl"
       v-model="query"
       rows="3"
-      :placeholder="theme.hint"
+      :placeholder="chain.length ? '写下你的那一段……' : theme.hint"
       aria-label="写下你要定位的文字"
       @keydown.ctrl.enter.prevent="runSearch"
       @keydown.meta.enter.prevent="runSearch"
@@ -611,7 +603,7 @@ const showExamples = computed(
       <span class="hint submit-hint">Ctrl + Enter 定位</span>
     </div>
     <p v-if="chainFallbackUrl" class="invite-fallback">
-      剪贴板不可用，请手动复制接龙链接：
+      接龙链接（可手动复制）：
       <input
         readonly
         :value="chainFallbackUrl"
@@ -644,27 +636,33 @@ const showExamples = computed(
     <p v-for="(s, i) in revealSteps" :key="i" class="reveal-step">{{ s }}</p>
   </div>
 
-  <article v-if="currentResult" ref="resultEl" class="card result single-result" aria-live="polite">
-    <p class="aphorism">{{ resultAphorism }}</p>
+  <article
+    v-if="currentResult"
+    ref="resultEl"
+    class="card result single-result found-card"
+    aria-live="polite"
+  >
+    <p class="found-line">它早已写在这里</p>
+    <p class="found-query">「{{ lastQuery }}」</p>
+    <p class="addr found-addr">{{ currentResult.addressText }}</p>
+    <div class="result-actions">
+      <button class="btn primary" @click="openResultTicket">领取宇宙收录证</button>
+      <RouterLink class="btn" :to="resultLink(currentResult)">翻开完整书页</RouterLink>
+      <button class="btn weak" @click="runSearch">在另一处寻找同一句话</button>
+    </div>
     <p v-if="resultChain" class="cowrite-mark">
       <template v-for="(s, i) in resultChain.slice(0, 8)" :key="i">
         <span class="cowrite-who">第 {{ i + 1 }} 位馆员：</span>{{ s }}<br />
       </template>
       <span v-if="resultChain.length > 8" class="hint">……共 {{ resultChain.length }} 段</span>
     </p>
-    <p class="snippet">
+    <p class="snippet found-proof">
       <template v-for="(seg, i) in [segments(currentResult)]" :key="i"
         >{{ seg[0] }}<mark>{{ seg[1] }}</mark
         >{{ seg[2] }}</template
       >
     </p>
-    <div class="result-foot">
-      <span class="addr">{{ currentResult.addressText }}</span>
-      <div class="result-actions">
-        <RouterLink class="btn primary" :to="resultLink(currentResult)">翻开这一页</RouterLink>
-        <button class="btn small" @click="runSearch">在图书馆的另一处寻找同一句话</button>
-      </div>
-    </div>
+    <p class="aphorism">{{ resultAphorism }}</p>
   </article>
 
   <section v-if="chunkProgress || chunkResults.length" class="results">
@@ -719,92 +717,5 @@ const showExamples = computed(
     </div>
   </details>
 
-  <section class="index-librorum">
-    <h2 class="index-title">馆员索引</h2>
-
-    <div class="index-item">
-      <p class="index-name">辩护书</p>
-      <p class="hint">凡可被写下的辩护，必然写在某一页上——包括为你的那一份。</p>
-      <div class="vindication">
-        <input
-          v-model="vname"
-          class="vname-input"
-          type="text"
-          placeholder="写下你的名字，或一句希望图书馆替你保存的辩词"
-          @keydown.enter.prevent="findVindication"
-        />
-        <button class="btn small" @click="findVindication">寻找辩护书</button>
-      </div>
-      <article v-if="vindication" class="card vindication-card">
-        <p class="vindication-line">它并非刚刚写成——自无始以来，就在那一页上。</p>
-        <p class="snippet">
-          <template v-for="(seg, i) in [segments(vindication)]" :key="i"
-            >{{ seg[0] }}<mark>{{ seg[1] }}</mark
-            >{{ seg[2] }}</template
-          >
-        </p>
-        <div class="result-foot">
-          <span class="addr">{{ vindication.addressText }}</span>
-          <RouterLink class="btn small" :to="resultLink(vindication)">翻开这一页</RouterLink>
-        </div>
-      </article>
-    </div>
-
-    <div class="index-item">
-      <p class="index-name">今日之页</p>
-      <p class="hint">今日全馆共同开放此页，零点更替。</p>
-      <RouterLink class="btn small" :to="dailyLink">翻开今日之页</RouterLink>
-    </div>
-
-    <div class="index-item">
-      <p class="index-name">反向定位</p>
-      <p class="hint">
-        手中已有一页文字？直接算出它的坐标，不必检索。不足一页以空格补足，换行不计入。
-      </p>
-      <textarea
-        v-model="revRaw"
-        rows="2"
-        class="rev-input"
-        :placeholder="`粘贴一整页文字（不超过 ${PAGE_LEN} 字）……`"
-        aria-label="粘贴一整页文字"
-      ></textarea>
-      <div class="search-actions">
-        <button class="btn small" @click="revLocate">算出坐标</button>
-      </div>
-      <p v-if="revErr" class="error">
-        {{ revErr }}
-        <button v-if="revBad.length" class="btn small" @click="revStrip">剔除这些符号并重试</button>
-      </p>
-      <p v-if="revLink" class="rev-result">
-        它的坐标：<RouterLink :to="revLink">{{ revAddr }}</RouterLink>
-      </p>
-    </div>
-
-    <div class="index-item">
-      <p class="index-name">馆员已经标记的几页</p>
-      <p class="hint">在不可计数的书页中，馆员留下了少量可辨认的坐标。</p>
-      <div class="classic-list">
-        <RouterLink
-          v-for="b in markedPages"
-          :key="b.id"
-          class="card classic-card"
-          :to="`/classic/${b.id}`"
-        >
-          <span class="classic-name">《{{ b.title }}》</span>
-          <span class="classic-meta">{{ b.author }} · {{ b.chapters.length }} 页</span>
-        </RouterLink>
-      </div>
-    </div>
-  </section>
-
-  <section v-if="shelfItems.length" class="shelf">
-    <h2 class="index-title">我的藏书</h2>
-    <div class="shelf-list">
-      <div v-for="item in shelfItems" :key="item.path" class="card shelf-item">
-        <RouterLink :to="item.path" class="shelf-label">{{ item.label }}</RouterLink>
-        <span class="addr">{{ item.addressText }}</span>
-        <button class="shelf-remove" @click="removeShelfItem(item.path)">移出</button>
-      </div>
-    </div>
-  </section>
+  <TicketModal :data="modalData" @close="modalData = null" />
 </template>

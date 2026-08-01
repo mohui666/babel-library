@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { RouterView, RouterLink } from 'vue-router';
 import { theme, toggleTheme } from './theme';
+import { dailyPath } from './core/daily';
+
+const dailyLink = dailyPath();
 </script>
 
 <template>
@@ -9,6 +12,9 @@ import { theme, toggleTheme } from './theme';
       <RouterLink to="/" class="site-title">巴别图书馆</RouterLink>
       <nav class="site-nav">
         <RouterLink to="/">检索</RouterLink>
+        <RouterLink :to="dailyLink">今日</RouterLink>
+        <RouterLink to="/index">索引</RouterLink>
+        <RouterLink to="/shelf">藏书</RouterLink>
         <RouterLink to="/about">关于</RouterLink>
         <button
           class="theme-toggle"

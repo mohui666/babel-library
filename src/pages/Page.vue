@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, watch, watchEffect } from 'vue';
+import { computed, onMounted, onUnmounted, ref, watch, watchEffect } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { PAGE_LEN, SPACE_SIZE, permute, permuteInv, textOfAddress } from '../core/codec';
 import { addrToKey, keyToAddr, decompose, formatAddress } from '../core/address';
@@ -12,7 +12,8 @@ import {
 } from '../core/search';
 import { PAGE_APHORISMS, pickByAddress } from '../core/aphorisms';
 import { CLASSICS } from '../classics/books';
-import { renderTicket, type TicketData, type TicketTheme } from '../core/ticket';
+import { renderTicket, type TicketData } from '../core/ticket';
+import TicketModal from '../components/TicketModal.vue';
 import { loadShelf, toggleShelf, inShelf, type ShelfItem } from '../core/shelf';
 
 const route = useRoute();
@@ -238,21 +239,10 @@ const view = computed<{ rows: Seg[][]; truncated: boolean }>(() => {
 // 收录证（分享图卡，三种装帧）与藏书夹
 // ---------------------------------------------------------------------------
 
-const showTicket = ref(false);
-const ticketUrl = ref('');
-const ticketTheme = ref<TicketTheme>('certificate');
-const ticketCloseBtn = ref<HTMLButtonElement>();
-const ticketOpenBtn = ref<HTMLButtonElement>();
-
-function closeTicket() {
-  showTicket.value = false;
-  nextTick(() => ticketOpenBtn.value?.focus());
-}
+const modalData = ref<TicketData | null>(null);
 
 function openTicket() {
-  makeTicket();
-  showTicket.value = true;
-  nextTick(() => ticketCloseBtn.value?.focus());
+  modalData.value = buildTicketData();
 }
 
 function buildTicketData(): TicketData | null {
@@ -267,23 +257,12 @@ function buildTicketData(): TicketData | null {
     addressText: formatAddress(state.value.coords),
     url: withShareSrc(window.location.href),
     host: window.location.host,
-    theme: ticketTheme.value,
+    theme: 'certificate',
     chain: chainSegs.value.length
       ? { count: chainSegs.value.length, continueUrl: chainContinueUrl.value }
       : undefined,
   };
 }
-
-function makeTicket() {
-  const d = buildTicketData();
-  if (!d) return;
-  const canvas = renderTicket(d);
-  ticketUrl.value = canvas.toDataURL('image/png');
-}
-
-watch(ticketTheme, () => {
-  if (showTicket.value) makeTicket();
-});
 
 const shelf = ref<ShelfItem[]>(loadShelf());
 const currentPath = computed(() => route.fullPath);
@@ -309,6 +288,15 @@ const isTrueCatalogue = computed(() => query.value === SPHERE);
 
 /** 接收者来源：分享链接带 src=share 时 CTA 更突出 */
 const fromShare = computed(() => route.query.src === 'share');
+
+/** CTA 回首页：带来源标记并继承当前主题 */
+const ctaHome = computed(() => {
+  let t = '';
+  try {
+    t = localStorage.getItem('babel:theme-idx') ?? '';
+  } catch {}
+  return `/?src=share${t !== '' ? `&theme=${t}` : ''}`;
+});
 
 /** 宇宙接龙档案：链接携带各棒归属（来自首页接龙定位） */
 const chainSegs = computed<string[]>(() => {
@@ -412,17 +400,8 @@ async function copyShare() {
 // ---------------------------------------------------------------------------
 
 function onKey(e: KeyboardEvent) {
-  if (showTicket.value) {
-    if (e.key === 'Escape') {
-      closeTicket();
-      return;
-    }
-    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') return; // 弹窗内禁止翻页
-    if (e.key === 'Tab') {
-      trapTicketFocus(e);
-      return;
-    }
-  }
+  // 收录证弹窗开启时：方向键不翻页（Esc/Tab 由弹窗组件自理）
+  if (modalData.value && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) return;
   const info = classicInfo.value;
   if (e.key === 'ArrowLeft') {
     if (info && info.ch > 0) gotoChapter(info.ch - 1);
@@ -435,26 +414,6 @@ function onKey(e: KeyboardEvent) {
 
 onMounted(() => window.addEventListener('keydown', onKey));
 onUnmounted(() => window.removeEventListener('keydown', onKey));
-
-/** 焦点陷阱：Tab 在收录证弹窗内循环 */
-function trapTicketFocus(e: KeyboardEvent) {
-  const box = document.querySelector('.ticket-box');
-  if (!box) return;
-  const focusables = [...box.querySelectorAll<HTMLElement>('button, a[href]')].filter(
-    (el) => !el.hasAttribute('disabled'),
-  );
-  if (focusables.length === 0) return;
-  const first = focusables[0];
-  const last = focusables[focusables.length - 1];
-  const active = document.activeElement as HTMLElement | null;
-  if (e.shiftKey && (active === first || !box.contains(active))) {
-    e.preventDefault();
-    last.focus();
-  } else if (!e.shiftKey && (active === last || !box.contains(active))) {
-    e.preventDefault();
-    first.focus();
-  }
-}
 
 watchEffect(() => {
   document.title = state.value.ok
@@ -513,7 +472,7 @@ const PAGE = PAGE_LEN;
         <button class="btn primary" @click="sharePage">
           {{ copiedShare ? '已复制文案 ✓' : '分享这句话' }}
         </button>
-        <button ref="ticketOpenBtn" class="btn" @click="openTicket">收录证</button>
+        <button class="btn" @click="openTicket">收录证</button>
         <button class="btn" @click="toggleSave">
           {{ saved ? '移出藏书夹' : '收入藏书夹' }}
         </button>
@@ -562,7 +521,7 @@ const PAGE = PAGE_LEN;
 
     <div class="cta-find" :class="{ big: fromShare }">
       <p>{{ fromShare ? '这句话属于朋友。你的那一句在哪里？' : '你的下一句话，会在哪里？' }}</p>
-      <RouterLink class="btn primary" to="/">也给我的话找一个地址</RouterLink>
+      <RouterLink class="btn primary" :to="ctaHome">也给我的话找一个地址</RouterLink>
     </div>
 
     <p class="aphorism center no-print">
@@ -573,36 +532,6 @@ const PAGE = PAGE_LEN;
       这一页共有 {{ PAGE }} 个字符。它从不存在于任何服务器上——你看到的每个字，都由它的地址推演而来。
     </p>
 
-    <div
-      v-if="showTicket"
-      class="ticket-modal"
-      role="dialog"
-      aria-modal="true"
-      aria-label="收录证"
-      @click.self="closeTicket"
-    >
-      <div class="ticket-box">
-        <div class="ticket-themes">
-          <button
-            v-for="t in [
-              ['certificate', '宇宙收录证'],
-              ['epitaph', '未来墓志铭'],
-              ['ticket', '原始藏书票'],
-            ]"
-            :key="t[0]"
-            :class="{ active: ticketTheme === t[0] }"
-            :aria-pressed="ticketTheme === t[0]"
-            @click="ticketTheme = t[0] as TicketTheme"
-          >
-            {{ t[1] }}
-          </button>
-        </div>
-        <img :src="ticketUrl" alt="收录证图卡" class="ticket-img" />
-        <div class="ticket-actions">
-          <a class="btn primary ticket-download" :href="ticketUrl" download="巴别图书馆收录证.png">下载</a>
-          <button ref="ticketCloseBtn" class="btn" @click="closeTicket">收起</button>
-        </div>
-      </div>
-    </div>
+    <TicketModal :data="modalData" @close="modalData = null" />
   </template>
 </template>
